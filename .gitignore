@@ -2,6 +2,11 @@
 node_modules/
 .pnpm-store/
 
+# 只保留仓库根的 package-lock.json（npm workspaces 统一管理），
+# 子包内的 lock 文件是多余的且会干扰 Vercel 上的 workspace 解析
+packages/*/package-lock.json
+apps/*/package-lock.json
+
 # 构建产物
 dist/
 .output/

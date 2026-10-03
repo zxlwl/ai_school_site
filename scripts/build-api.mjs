@@ -37,7 +37,7 @@
  */
 
 import { build } from 'esbuild'
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -150,8 +150,132 @@ try {
     process.exit(1)
   }
   console.log('  ✓ 编码无损（U+FFFD: 0）')
+
+  /*
+   * ── 生成 Vercel Build Output API 产物 ──────────────────────────
+   *
+   * 为什么需要这一步（本项目踩过的最大坑）：
+   *   vercel.json 里同时存在 buildCommand + outputDirectory + framework:null
+   *   时，Vercel 会把项目当作「纯静态站点」：跑完 buildCommand、把
+   *   outputDirectory 整体上传，**完全跳过 api/ 目录的函数发现**。
+   *   表现为：构建 Ready、页面正常，但构建日志里「0 个函数」，
+   *   /api/* 全部 404。
+   *
+   *   解法是改用 Build Output API：由我们自己产出 .vercel/output/ 目录，
+   *   在其中显式声明函数，Vercel 只需照单执行，不再依赖自动发现。
+   *
+   * 目录约定（Vercel Build Output API v3）：
+   *   .vercel/output/config.json                  顶层路由配置
+   *   .vercel/output/functions/<name>.func/       每个函数一个目录
+   *     ├── .vc-config.json                       函数运行时配置
+   *     └── index.mjs                             函数实现
+   */
+  const outDir = join(root, '.vercel', 'output')
+  const funcDir = join(outDir, 'functions', 'index.func')
+
+  rmSync(outDir, { recursive: true, force: true })
+  mkdirSync(funcDir, { recursive: true })
+
+  // 函数实现：直接复用已打包好的产物
+  copyFileSync(outfile, join(funcDir, 'index.mjs'))
+
+  /*
+   * .vc-config.json 告知 Vercel 如何运行这个函数。
+   *   runtime: nodejs —— 走 Node 运行时（非 Edge）
+   *   handler: index.mjs —— 入口文件名（相对函数目录）
+   *   launcherType: Nodejs —— 用 Node 启动器，它会把默认导出当作
+   *     (req, res) 或 Web Request handler 调用
+   */
+  writeFileSync(
+    join(funcDir, '.vc-config.json'),
+    JSON.stringify(
+      {
+        runtime: 'nodejs20.x',
+        handler: 'index.mjs',
+        launcherType: 'Nodejs',
+        shouldAddHelpers: true,
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+
+  /*
+   * 顶层 config.json：声明路由。
+   *
+   * 关键点是 filesystem 处理器必须排在函数之前，否则 Vercel 会把
+   * 所有请求都丢给函数。顺序：静态文件 → 函数 → 其余交给前端 SPA。
+   */
+  writeFileSync(
+    join(outDir, 'config.json'),
+    JSON.stringify(
+      {
+        version: 3,
+        routes: [
+          // 1. 静态资源优先（前端 dist 里的 assets、favicon 等）
+          { handle: 'filesystem' },
+          // 2. 所有 /api/* 交给函数
+          { src: '/api/(.*)', dest: '/api/index' },
+          // 3. 其余路径交给前端（SPA 路由，直接改写而不是重定向）
+          { src: '/(.*)', dest: '/index.html' },
+        ],
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+
+  console.log(`  ✓ 已生成 Build Output API 产物: .vercel/output/`)
+  console.log(`    functions/index.func/  （函数，${(statSync(join(funcDir, 'index.mjs')).size / 1024).toFixed(1)} KB）`)
+  console.log(`    config.json            （路由：静态 → /api/* → SPA 兜底）`)
+
+  /*
+   * ── 复制前端静态文件 ──────────────────────────────────────────
+   *
+   * 致命细节：切换到 Build Output API 后，vercel.json 里已没有
+   * outputDirectory，前端产物**不会**被自动带上。而 config.json 的第一条
+   * 路由是 { handle: 'filesystem' }，它只会去 .vercel/output/static/ 找文件。
+   * 若不复制，结果是：函数能跑、但整个站点空白（连 index.html 都没有）。
+   *
+   * 因此这里必须把 apps/web/dist 完整搬进 static/。
+   */
+  const staticDir = join(outDir, 'static')
+  const webDist = join(root, 'apps', 'web', 'dist')
+
+  if (!existsSync(join(webDist, 'index.html'))) {
+    console.error(`✗ 找不到前端产物: ${webDist}/index.html`)
+    console.error('  请确认根 build 脚本中「前端构建」排在 build:api 之前')
+    process.exit(1)
+  }
+
+  mkdirSync(staticDir, { recursive: true })
+  copyDirSync(webDist, staticDir)
+
+  const staticFiles = countFiles(staticDir)
+  console.log(`    static/                （前端 ${staticFiles} 个文件，含 index.html）`)
 } catch (err) {
   console.error('✗ 打包失败:')
   console.error(err.message)
   process.exit(1)
+}
+
+/** 递归复制目录（Node 18+ 的 cpSync 在部分平台对符号链接行为不一致，这里手写更稳） */
+function copyDirSync(from, to) {
+  mkdirSync(to, { recursive: true })
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const src = join(from, entry.name)
+    const dest = join(to, entry.name)
+    if (entry.isDirectory()) copyDirSync(src, dest)
+    else if (entry.isFile()) copyFileSync(src, dest)
+  }
+}
+
+/** 统计目录下文件总数 */
+function countFiles(dir) {
+  let n = 0
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) n += countFiles(join(dir, entry.name))
+    else if (entry.isFile()) n++
+  }
+  return n
 }

@@ -12,7 +12,7 @@
     "dev": "npm run dev:api & npm run dev:web",
     "dev:api": "npm --workspace @school/api run dev",
     "dev:web": "npm --workspace @school/web run dev",
-    "build": "npm run build:shared && npm run build:api && npm --workspace @school/web run build",
+    "build": "npm run build:shared && npm --workspace @school/web run build && npm run build:api",
     "build:shared": "npm --workspace @school/shared run build",
     "build:api": "node scripts/build-api.mjs",
     "db:generate": "npm --workspace @school/api run db:generate",

@@ -239,8 +239,36 @@ if (!existsSync(vc)) {
     note('未声明 includeFiles: api/_bundle.mjs —— 若函数运行时找不到该文件请补上')
   }
 
-  if (!cfg.rewrites?.length) bad('缺少 SPA rewrites —— 刷新 /admin 等子路由会 404')
-  else ok(`SPA rewrites 已配置（${cfg.rewrites.length} 条）`)
+  /*
+   * SPA 路由现在由 .vercel/output/config.json 负责（Build Output API 模式），
+   * 不再写在 vercel.json 的 rewrites 里。因此这里改为检查两者之一：
+   *   - 新方式：config.json 含 filesystem 路由 + SPA 兜底
+   *   - 旧方式：vercel.json 含 rewrites
+   */
+  const buildOutputConfig = join(root, '.vercel', 'output', 'config.json')
+  if (existsSync(buildOutputConfig)) {
+    const bo = JSON.parse(readFileSync(buildOutputConfig, 'utf8'))
+    const routes = bo.routes ?? []
+    const hasFs = routes.some((r) => r.handle === 'filesystem')
+    const hasApi = routes.some((r) => String(r.src).includes('/api/'))
+    const hasSpa = routes.some((r) => String(r.dest) === '/index.html')
+    if (hasFs && hasApi && hasSpa) {
+      ok('Build Output config.json 已配置路由（filesystem → /api/* → SPA 兜底）')
+    } else {
+      bad(`Build Output config.json 路由不全（filesystem:${hasFs} api:${hasApi} spa:${hasSpa}）`)
+    }
+  } else if (!cfg.rewrites?.length) {
+    bad('既无 vercel.json rewrites 也无 .vercel/output/config.json —— 刷新 /admin 等子路由会 404')
+  } else {
+    ok(`SPA rewrites 已配置（${cfg.rewrites.length} 条，旧方式）`)
+  }
+
+  // 切到 Build Output API 后，不能再声明 outputDirectory（会退回静态站点模式）
+  if (existsSync(buildOutputConfig) && cfg.outputDirectory) {
+    bad('同时存在 outputDirectory 与 Build Output API —— Vercel 会退回静态站点模式并跳过函数发现')
+  } else if (existsSync(buildOutputConfig)) {
+    ok('vercel.json 未声明 outputDirectory（已移交 Build Output API）')
+  }
 }
 
 // package.json 里的 packageManager 若写 pnpm 会强制 Vercel 用 pnpm

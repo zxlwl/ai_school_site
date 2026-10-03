@@ -275,12 +275,56 @@ ECMAScript imports when '--moduleResolution' is 'node16'
 *如何自查*：
 
 ```bash
-node scripts/preflight.mjs      # 6 段自检，覆盖整条产物链（含命名冲突检查）
-node scripts/verify-bundle.mjs  # 在纯 Node 下实测产物与各路由
+node scripts/preflight.mjs          # 6 段自检，覆盖整条产物链（含命名冲突检查）
+node scripts/verify-build-output.mjs # 验收 .vercel/output/（目录、路由次序、函数调用）
+node scripts/verify-bundle.mjs      # 在纯 Node 下实测打包产物与各路由
 ```
 
 > 为什么必须用**纯 Node** 验收，而不是 `tsx`：`tsx` 会即时编译 TS，
 > 从而掩盖「运行时拿到裸 `.ts` 引用」这类问题。本项目正是因此误判过一次。
+
+---
+
+**Q：构建日志显示 Ready，但日志里「0 个函数」，`/api/*` 全部 404**
+
+这是本项目踩过的**第二个**坑，比 TS2835 更隐蔽。
+
+*根因*：`vercel.json` 里同时存在 `buildCommand` + `outputDirectory` +
+`framework: null` 时，Vercel 会把项目当作**纯静态站点**：跑完 `buildCommand`、
+把 `outputDirectory` 整体上传，然后**完全跳过 `api/` 目录的函数发现**。
+所以函数压根没被注册，日志里自然「0 个函数」，而且不报任何错。
+
+*解法*：改用 **Build Output API v3** —— 由构建脚本自己产出 `.vercel/output/`，
+在其中显式声明函数与路由，Vercel 只需照单执行，不再依赖自动发现。
+
+产物结构（全部由 `scripts/build-api.mjs` 生成）：
+
+```
+.vercel/output/
+├── config.json                          # 路由：filesystem → /api/* → SPA 兜底
+├── functions/index.func/
+│   ├── .vc-config.json                  # runtime: nodejs20.x, launcherType: Nodejs
+│   └── index.mjs                        # 函数实现（复制自 api/_bundle.mjs）
+└── static/                              # 前端产物（必须显式复制！）
+    ├── index.html
+    └── assets/...
+```
+
+因此 `vercel.json` 现在只剩三行有效配置（`buildCommand` / `installCommand` /
+`framework`），`outputDirectory`、`rewrites`、`functions` 全部移交 `config.json`。
+
+> **两个容易漏掉的点**
+>
+> 1. **前端必须显式复制进 `static/`**。切到 Build Output API 后
+>    `outputDirectory` 不再生效，而 `{ handle: 'filesystem' }` 只查
+>    `.vercel/output/static/`。漏掉这步的后果是：函数能跑，但整站空白。
+> 2. **构建顺序**：`build:shared` → **web build** → `build:api`。
+>    `build:api` 现在要读 `apps/web/dist` 来填充 `static/`，必须排在前面。
+
+路由次序也不能错：`filesystem` 必须在 `/api/*` 之前（否则静态资源被函数抢走），
+`/api/*` 必须在 SPA 兜底之前（否则接口被 SPA 吞掉、永远返回 HTML）。
+`scripts/verify-build-output.mjs` 会校验这三者的顺序。
+
 
 *判断 Vercel 是否真的跳过了函数*：部署日志里搜 `TS2835`。有 → 说明产物链
 断了，检查 `api/_bundle.mjs` 是否已提交、根 `build` 脚本是否含 `build:api`。

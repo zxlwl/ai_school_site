@@ -5,11 +5,12 @@
  * 用法：node scripts/preflight.mjs
  *
  * 检查项（均为真实部署时最容易踩的坑）：
- *   1. 函数入口文件存在，且相对导入能解析到真实文件
- *   2. vercel.json 的 installCommand / buildCommand 与实际构建方式一致
- *   3. 前端构建产物存在（apps/web/dist/index.html）
- *   4. 前端请求的是相对路径 /api（同域部署的前提）
- *   5. 必需的环境变量在平台侧已配置（不打印值，只报告有无）
+ *   1. Serverless 函数入口存在，且相对导入能解析到真实文件
+ *   2. 跨包依赖（@school/shared）导出真实 JS 而非裸 TS —— Serverless 关键
+ *   3. vercel.json 的 installCommand / buildCommand 与实际构建方式一致
+ *   4. 前端构建产物存在（apps/web/dist/index.html）
+ *   5. 前端请求的是相对路径 /api（同域部署的前提）
+ *   6. 必需的环境变量在平台侧已配置（不打印值，只报告有无）
  */
 
 import { readFileSync, existsSync, statSync } from 'node:fs'
@@ -38,14 +39,64 @@ if (!existsSync(entry)) {
   const imports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1])
   for (const spec of imports) {
     const base = resolve(dirname(entry), spec)
-    const hit = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts')].find((p) => existsSync(p) && statSync(p).isFile())
+    const hit = [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts')].find(
+      (p) => existsSync(p) && statSync(p).isFile(),
+    )
     if (hit) ok(`导入可解析: ${spec} → ${hit.slice(root.length + 1)}`)
     else bad(`导入无法解析: ${spec}（Vercel 构建会报模块找不到）`)
   }
 }
 
 /* ---------------------------------------------------------------- */
-section('2. vercel.json 配置')
+section('2. 跨包依赖（Serverless 运行时关键）')
+
+/**
+ * Vercel 的函数运行时是纯 Node（默认 Node 20/22），它有两个硬性约束：
+ *   1. 不能执行裸 .ts 文件
+ *   2. 不跟随 npm workspaces 的 node_modules 符号链接做依赖打包
+ * 因此 packages/shared 必须编译出真实的 dist/index.js，且 main/exports
+ * 必须指向它，否则函数一加载就报 Cannot find module。
+ */
+const sharedPkgPath = join(root, 'packages', 'shared', 'package.json')
+if (existsSync(sharedPkgPath)) {
+  const sp = JSON.parse(readFileSync(sharedPkgPath, 'utf8'))
+  const main = sp.main ?? ''
+  const exp = sp.exports?.['.']
+  const importTarget = typeof exp === 'string' ? exp : exp?.import ?? exp?.default ?? ''
+
+  if (/\.ts$/.test(main)) {
+    bad(`@school/shared 的 main 指向裸 TS（${main}）—— Node 运行时无法执行，函数会崩`)
+  } else if (main) {
+    ok(`@school/shared main = ${main}`)
+  }
+
+  if (importTarget && /\.ts$/.test(importTarget)) {
+    bad(`@school/shared exports.import 指向裸 TS（${importTarget}）`)
+  } else if (importTarget) {
+    ok(`@school/shared exports = ${importTarget}`)
+  }
+
+  const distJs = join(root, 'packages', 'shared', 'dist', 'index.js')
+  if (existsSync(distJs)) {
+    ok(`编译产物存在（${statSync(distJs).size} 字节），Node 可直接加载`)
+  } else {
+    note('packages/shared/dist/index.js 尚未生成 —— 构建时会生成，本地验证需先 npm run build:shared')
+  }
+
+  // 确认构建脚本确实会编译 shared
+  const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  const buildScript = rootPkg.scripts?.build ?? ''
+  if (/build:shared/.test(buildScript)) {
+    ok(`根 build 脚本先编译 shared：${buildScript}`)
+  } else {
+    bad(`根 build 脚本未包含 build:shared（当前：${buildScript}）—— Vercel 上 shared 不会有产物`)
+  }
+} else {
+  note('未找到 packages/shared（若已移除共享包可忽略）')
+}
+
+/* ---------------------------------------------------------------- */
+section('3. vercel.json 配置')
 
 const vc = join(root, 'vercel.json')
 if (!existsSync(vc)) {
@@ -81,7 +132,7 @@ if (/^pnpm@/.test(pkg.packageManager ?? '')) {
 }
 
 /* ---------------------------------------------------------------- */
-section('3. 前端构建产物')
+section('4. 前端构建产物')
 
 const dist = join(root, 'apps', 'web', 'dist')
 if (existsSync(join(dist, 'index.html'))) {
@@ -94,7 +145,7 @@ if (existsSync(join(dist, 'index.html'))) {
 }
 
 /* ---------------------------------------------------------------- */
-section('4. 前后端同域（API 基址）')
+section('5. 前后端同域（API 基址）')
 
 const apiLib = join(root, 'apps', 'web', 'src', 'lib', 'api.ts')
 if (existsSync(apiLib)) {
@@ -113,7 +164,7 @@ if (existsSync(apiLib)) {
 }
 
 /* ---------------------------------------------------------------- */
-section('5. 环境变量（只报告有无，不打印值）')
+section('6. 环境变量（只报告有无，不打印值）')
 
 const REQUIRED = [
   ['DATABASE_URL', 'Postgres 连接串（Vercel 上必须用 Neon 等 HTTP 网关）'],

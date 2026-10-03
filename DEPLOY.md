@@ -179,10 +179,18 @@ export const onRequest: PagesFunction = async ({ request, env }) => {
 
 ## 四、常见问题
 
-**Q：部署后首页白屏、`/api/health` 500**
-检查 `DATABASE_URL` 是否配置。缺失时接口会返回
-`{"error":"configuration_error","message":"DATABASE_URL 未配置。..."}`。
-在 Vercel 上改完环境变量需要 **Redeploy** 才生效。
+**Q：部署后首页显示「无法加载站点 / 没能连接到后端 API」**
+说明前端起来了但函数报错。**先在浏览器直接访问 `https://你的域名/api/health`**，
+那里会返回真实错误原因（前端那句提示是兜底文案，会掩盖细节）。常见原因：
+
+| `/api/health` 返回 | 原因 | 解决 |
+|---|---|---|
+| `configuration_error` / 500 且提到 `DATABASE_URL 未配置` | 环境变量没生效 | Vercel 上改完环境变量**必须 Redeploy** |
+| `Cannot find module '@school/shared'` | 共享包导出的是裸 TS，Node 运行时执行不了 | 本项目已修复（`packages/shared` 编译出 `dist/index.js`）；若你改过 `build` 脚本，确认它包含 `build:shared` |
+| 404 | 函数入口没被打包 | 确认根目录存在 `api/index.ts`，且 `vercel.json` 的 `functions` 指向它 |
+| 连接超时 / `ECONNREFUSED` | `DATABASE_URL` 不是 Neon HTTP 网关串 | 换成带 `-pooler` 的 Neon 连接串（Vercel 函数无 TCP 长连接） |
+
+本地可用 `node scripts/preflight.mjs` 提前发现前两类问题。
 
 **Q：后台登录后立刻跳回登录页**
 Cookie 没种上。确认访问的是 `https` 且前后端**同域**；
@@ -192,14 +200,20 @@ Cookie 没种上。确认访问的是 `https` 且前后端**同域**；
 `vercel.json` 的 `installCommand`/`buildCommand` 必须用 `npm`。
 本项目已改为 npm，且根 `package.json` 的 `packageManager` 为 `npm@11`。
 
-**Q：Vercel 构建报找不到函数入口**
-函数入口必须在**仓库根目录的 `api/` 下**。本项目根 `api/index.ts` 已就位，
-它 import 的是 `../apps/api/src/app`，Vercel 打包时会自动追踪该依赖树。
+**Q：Vercel 导入页面提示「Multiple applications detected」并让你选 Services**
+这是 Vercel 扫到 `apps/api` 和 `apps/web` 两个子目录后的**误判**。
+把 **Application Preset 改成 `Other`**（不要选 Services，也不要点任何一个
+"Import single project"）——改成 Other 后 Vercel 才会读取仓库根的 `vercel.json`。
+若按 Services 拆成两个项目，Cookie 会因跨域失效，登录一直失败。
 
 **Q：图片上传失败 / 提示存储未配置**
 默认 `STORAGE_DRIVER=dataurl` 会把图片转 base64 存进数据库，单图上限由
 `UPLOAD_MAX_BYTES` 控制（默认 2MB）。若需对象存储，可设 `STORAGE_DRIVER=s3`
 并配置 `S3_*` 系列变量（兼容任何 S3 协议服务，**不必是 R2**）。
+
+**Q：修改 `packages/shared` 后前端或后端行为没变**
+`packages/shared` 现在会先编译到 `dist/index.js`（后端运行时需要真实 JS）。
+改完源码跑 `npm run build:shared`，或直接 `npm run build`（已包含该步骤）。
 
 **Q：想改数据库表结构后重新部署**
 本地改 `apps/api/src/db/schema.ts` → 跑 `npm run db:push` → 重新部署。

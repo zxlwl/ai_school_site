@@ -215,8 +215,67 @@ Cookie 没种上。确认访问的是 `https` 且前后端**同域**；
 `packages/shared` 现在会先编译到 `dist/index.js`（后端运行时需要真实 JS）。
 改完源码跑 `npm run build:shared`，或直接 `npm run build`（已包含该步骤）。
 
-**Q：想改数据库表结构后重新部署**
+**Q：改数据库表结构后怎么重新部署**
 本地改 `apps/api/src/db/schema.ts` → 跑 `npm run db:push` → 重新部署。
+
+**Q：页面能打开，但首页显示「无法加载站点」，所有接口都 404**
+
+这是本项目踩过的最隐蔽的坑，**根因在 Vercel 的函数发现机制**，不在你的配置。
+
+*现象*：前端构建成功、页面正常渲染，但 `/api/health` 返回 `404 NOT_FOUND`，
+首页显示「无法加载站点 / 没能连接到后端 API」。部署日志**看起来是成功的**：
+
+```
+Build Completed in /vercel/output [18s]
+Deploying outputs...
+Deployment completed
+```
+
+*根因*：Vercel 一旦发现根目录的 `api/index.ts`，就会用它**自带的 TypeScript
+环境**去编译这个入口**以及它 import 的整条依赖树**，且强制
+`moduleResolution=node16`。而本项目后端源码使用无扩展名相对导入
+（如 `from '../lib/utils'`），在 node16 下会报：
+
+```
+error TS2835: Relative import paths need explicit file extensions in
+ECMAScript imports when '--moduleResolution' is 'node16'
+```
+
+关键在于：**这个错误不会中断构建**。Vercel 依然打印 `Build Completed` 和
+`Deployment completed`，只是把函数打包那一步**静默跳过**了 —— 于是
+`/api/*` 全部 404，而日志里没有任何醒目的失败提示。
+
+*本项目的解法（已内置）*：不让 Vercel 碰任何 TS 源码，改为「预打包 + 薄壳入口」。
+
+| 文件 | 角色 |
+|---|---|
+| `scripts/build-api.mjs` | 用 esbuild 把整个后端打成自包含的 `api/index.mjs` |
+| `api/index.mjs` | 真正的实现，**已入库**（Vercel 构建前就扫描 `api/`，产物必须已存在） |
+| `api/index.ts` | 薄壳，只 `export { default } from './index.mjs'` |
+| `api/index.d.mts` | 薄壳导入 `.mjs` 的类型声明（否则报 TS7016） |
+
+`api/index.mjs` 零相对导入、零 `require`，只引用 npm 包名，并已内联
+`@school/shared`（该包以裸 TS 发布，Serverless 运行时无法解析）。
+`vercel.json` 里用 `includeFiles: "api/index.mjs"` 确保产物随函数上传。
+
+> 注意：Vercel 会**忽略** `api/` 目录下的 `.mjs`/`.mts` 作为函数入口
+> （只认 `.ts`/`.js`），所以同名的 `index.mjs` 不会被误注册成第二个函数。
+
+*你要做什么*：正常情况下**什么都不用做** —— 根 `npm run build` 已串入
+`build:api`，Vercel 构建时自动生成产物。只需在改完后端代码后记得重新部署。
+
+*如何自查*：
+
+```bash
+node scripts/preflight.mjs      # 6 段自检，覆盖整条产物链
+node scripts/verify-bundle.mjs  # 在纯 Node 下实测产物与各路由
+```
+
+> 为什么必须用**纯 Node** 验收，而不是 `tsx`：`tsx` 会即时编译 TS，
+> 从而掩盖「运行时拿到裸 `.ts` 引用」这类问题。本项目正是因此误判过一次。
+
+*判断 Vercel 是否真的跳过了函数*：部署日志里搜 `TS2835`。有 → 说明产物链
+断了，检查 `api/index.mjs` 是否已提交、根 `build` 脚本是否含 `build:api`。
 
 ---
 

@@ -249,17 +249,25 @@ ECMAScript imports when '--moduleResolution' is 'node16'
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/build-api.mjs` | 用 esbuild 把整个后端打成自包含的 `api/index.mjs` |
-| `api/index.mjs` | 真正的实现，**已入库**（Vercel 构建前就扫描 `api/`，产物必须已存在） |
-| `api/index.ts` | 薄壳，只 `export { default } from './index.mjs'` |
-| `api/index.d.mts` | 薄壳导入 `.mjs` 的类型声明（否则报 TS7016） |
+| `scripts/build-api.mjs` | 用 esbuild 把整个后端打成自包含的 `api/_bundle.mjs` |
+| `api/_bundle.mjs` | 真正的实现，**已入库**（Vercel 构建前就扫描 `api/`，产物必须已存在） |
+| `api/index.ts` | 薄壳，只 `export { default } from './_bundle.mjs'` |
+| `api/_bundle.d.mts` | 薄壳导入 `.mjs` 的类型声明（否则报 TS7016） |
 
-`api/index.mjs` 零相对导入、零 `require`，只引用 npm 包名，并已内联
+`api/_bundle.mjs` 零相对导入、零 `require`，只引用 npm 包名，并已内联
 `@school/shared`（该包以裸 TS 发布，Serverless 运行时无法解析）。
-`vercel.json` 里用 `includeFiles: "api/index.mjs"` 确保产物随函数上传。
+`vercel.json` 里用 `includeFiles: "api/_bundle.mjs"` 确保产物随函数上传。
 
-> 注意：Vercel 会**忽略** `api/` 目录下的 `.mjs`/`.mts` 作为函数入口
-> （只认 `.ts`/`.js`），所以同名的 `index.mjs` 不会被误注册成第二个函数。
+> **产物为什么叫 `_bundle.mjs` 而不是 `index.mjs`？**
+> Vercel CLI 会按「去掉扩展名后的路径」判断函数是否重名，`api/index.mjs`
+> 与 `api/index.ts` 因此被判为同一路径的两个函数，构建**直接失败**：
+> ```
+> Error: Two or more files have conflicting paths or names. Please make sure
+> path segments and filenames, without their extension, are unique.
+> The path "api/index.mjs" has conflicts with "api/index.ts".
+> ```
+> 改名后还要加下划线前缀：`_` 开头是 Vercel 约定的「非路由文件」标记，
+> 确保产物不被注册成第二个函数入口。
 
 *你要做什么*：正常情况下**什么都不用做** —— 根 `npm run build` 已串入
 `build:api`，Vercel 构建时自动生成产物。只需在改完后端代码后记得重新部署。
@@ -267,7 +275,7 @@ ECMAScript imports when '--moduleResolution' is 'node16'
 *如何自查*：
 
 ```bash
-node scripts/preflight.mjs      # 6 段自检，覆盖整条产物链
+node scripts/preflight.mjs      # 6 段自检，覆盖整条产物链（含命名冲突检查）
 node scripts/verify-bundle.mjs  # 在纯 Node 下实测产物与各路由
 ```
 
@@ -275,7 +283,8 @@ node scripts/verify-bundle.mjs  # 在纯 Node 下实测产物与各路由
 > 从而掩盖「运行时拿到裸 `.ts` 引用」这类问题。本项目正是因此误判过一次。
 
 *判断 Vercel 是否真的跳过了函数*：部署日志里搜 `TS2835`。有 → 说明产物链
-断了，检查 `api/index.mjs` 是否已提交、根 `build` 脚本是否含 `build:api`。
+断了，检查 `api/_bundle.mjs` 是否已提交、根 `build` 脚本是否含 `build:api`。
+若报 `conflicting paths`，则是 `api/` 下有两个去扩展名同名的文件。
 
 ---
 

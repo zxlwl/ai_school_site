@@ -10,7 +10,7 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const sim = process.argv[2] ?? resolve(process.cwd())
-const bundle = resolve(sim, 'api/index.mjs')
+const bundle = resolve(sim, 'api/_bundle.mjs')
 
 console.log(`模拟目录: ${sim}`)
 console.log(`产物路径: ${bundle}`)

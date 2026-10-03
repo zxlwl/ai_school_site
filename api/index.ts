@@ -28,7 +28,7 @@
  * ─────────────────────────────────────────────────────────────
  */
 
-import handler from './index.mjs'
+import handler from './_bundle.mjs'
 
 export const config = {
   runtime: 'nodejs',

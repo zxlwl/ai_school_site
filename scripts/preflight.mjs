@@ -13,7 +13,7 @@
  *   6. 必需的环境变量在平台侧已配置（不打印值，只报告有无）
  */
 
-import { readFileSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -30,19 +30,48 @@ const section = (t) => console.log(`\n\x1b[1m${t}\x1b[0m`)
 section('1. Serverless 函数入口（预打包产物链）')
 
 /*
- * 本项目刻意把函数实现「预打包」成 api/index.mjs，而不是让 Vercel 直接
+ * 本项目刻意把函数实现「预打包」成 api/_bundle.mjs，而不是让 Vercel 直接
  * 编译 api/index.ts 的 TS 依赖树。原因：Vercel 会用 moduleResolution=node16
  * 编译入口及其全部依赖，而 apps/api 源码使用无扩展名相对导入，会报 TS2835；
  * 该错误不中断部署（仍显示 Build Completed），但函数被静默跳过 → /api/* 全 404。
  *
+ * 产物为何不叫 index.mjs：Vercel CLI 会报
+ *   Error: Two or more files have conflicting paths or names.
+ *   The path "api/index.mjs" has conflicts with "api/index.ts".
+ * 两者去掉扩展名后同名，被判为同一路径的两个函数，构建直接失败。
+ * 故产物改名 _bundle.mjs（下划线前缀 = 非路由文件）。
+ *
  * 因此这里必须检查三件套齐备，缺一不可：
- *   api/index.ts    → 薄壳入口（Vercel 唯一认的函数入口）
- *   api/index.mjs   → 真正的实现（构建产物，但必须入库）
- *   api/index.d.mts → 薄壳导入 .mjs 时的类型声明，缺了会 TS7016
+ *   api/index.ts      → 薄壳入口（Vercel 唯一认的函数入口）
+ *   api/_bundle.mjs   → 真正的实现（构建产物，但必须入库）
+ *   api/_bundle.d.mts → 薄壳导入 .mjs 时的类型声明，缺了会 TS7016
  */
 const entry = join(root, 'api', 'index.ts')
-const bundle = join(root, 'api', 'index.mjs')
-const bundleTypes = join(root, 'api', 'index.d.mts')
+const bundle = join(root, 'api', '_bundle.mjs')
+const bundleTypes = join(root, 'api', '_bundle.d.mts')
+
+// 命名冲突检查：api/ 下不能有两个「去掉扩展名后同名」的真函数文件。
+// 注意 *声明文件*（*.d.ts / *.d.mts / *.d.cts）不算函数候选，必须排除 ——
+// 否则 _bundle.mjs 与 _bundle.d.mts 会被误判为冲突。
+const apiDir = join(root, 'api')
+if (existsSync(apiDir)) {
+  const stems = {}
+  const candidates = []
+  for (const f of readdirSync(apiDir)) {
+    // 跳过声明文件与下划线前缀的非路由文件
+    if (/\.d\.(ts|mts|cts)$/i.test(f)) continue
+    if (f.startsWith('_')) continue
+    const m = f.match(/^(.+?)(\.[a-z]+)$/i)
+    if (!m) continue
+    candidates.push(f)
+    ;(stems[m[1]] ??= []).push(f)
+  }
+  const conflicts = Object.entries(stems).filter(([, files]) => files.length > 1)
+  for (const [, files] of conflicts) {
+    bad(`api/ 下函数入口命名冲突: ${files.join(' 与 ')} —— Vercel 会报 conflicting paths，构建直接失败`)
+  }
+  if (!conflicts.length) ok(`api/ 下无函数入口冲突（函数候选: ${candidates.join(', ') || '无'}）`)
+}
 
 if (!existsSync(entry)) {
   bad('缺少根目录 api/index.ts —— Vercel 找不到任何函数')
@@ -50,10 +79,10 @@ if (!existsSync(entry)) {
   ok('根目录 api/index.ts 存在（函数入口）')
 
   if (!existsSync(bundle)) {
-    bad('缺少 api/index.mjs —— 请先运行 npm run build:api')
+    bad('缺少 api/_bundle.mjs —— 请先运行 npm run build:api')
   } else {
     const size = statSync(bundle).size
-    ok(`api/index.mjs 存在（${(size / 1024).toFixed(1)} KB，预打包的实现）`)
+    ok(`api/_bundle.mjs 存在（${(size / 1024).toFixed(1)} KB，预打包的实现）`)
 
     // 产物必须是自包含的：有任何相对导入都会在 Serverless 运行时崩
     const code = readFileSync(bundle, 'utf8')
@@ -85,9 +114,9 @@ if (!existsSync(entry)) {
   }
 
   if (!existsSync(bundleTypes)) {
-    note('缺少 api/index.d.mts —— 本地 tsc 可能报 TS7016（Vercel 通常不启用 strict 仍可构建）')
+    note('缺少 api/_bundle.d.mts —— 本地 tsc 可能报 TS7016（Vercel 通常不启用 strict 仍可构建）')
   } else {
-    ok('api/index.d.mts 存在（.mjs 导入的类型声明）')
+    ok('api/_bundle.d.mts 存在（.mjs 导入的类型声明）')
   }
 
   // 薄壳不应再直接引用后端源码，否则 Vercel 又会去编译整条 TS 依赖树
@@ -98,6 +127,16 @@ if (!existsSync(entry)) {
     bad(`api/index.ts 直接导入了源码 ${leaksSource.join(', ')} —— 会触发 Vercel 的 node16 编译（TS2835）`)
   } else {
     ok(`api/index.ts 仅导入预打包产物（${srcImports.join(', ') || '无'}）`)
+  }
+
+  // 薄壳导入的目标必须真实存在，且必须是 _bundle.mjs（不能是 index.mjs，那会命名冲突）
+  const mjsImport = srcImports.find((s) => /\.mjs$/.test(s))
+  if (mjsImport === './index.mjs') {
+    bad('api/index.ts 导入了 ./index.mjs —— 与 index.ts 同名，Vercel 会报 conflicting paths')
+  } else if (mjsImport && existsSync(resolve(dirname(entry), mjsImport))) {
+    ok(`薄壳导入目标存在: ${mjsImport}`)
+  } else if (mjsImport) {
+    bad(`薄壳导入目标不存在: ${mjsImport}`)
   }
 
   // 确认构建脚本会生成产物
@@ -192,10 +231,12 @@ if (!existsSync(vc)) {
 
   // includeFiles 确保预打包产物随函数一起上传（.mjs 被忽略但仍是运行时依赖）
   const inc = fnKeys.map((k) => cfg.functions[k]?.includeFiles).filter(Boolean)
-  if (inc.some((v) => String(v).includes('index.mjs'))) {
-    ok('includeFiles 已声明 api/index.mjs —— 产物会随函数上传')
+  if (inc.some((v) => String(v).includes('_bundle.mjs'))) {
+    ok('includeFiles 已声明 api/_bundle.mjs —— 产物会随函数上传')
+  } else if (inc.some((v) => String(v).includes('index.mjs'))) {
+    bad('includeFiles 指向 api/index.mjs —— 该文件已改名 _bundle.mjs，会有命名冲突')
   } else if (fnKeys.length) {
-    note('未声明 includeFiles: api/index.mjs —— 若函数运行时找不到该文件请补上')
+    note('未声明 includeFiles: api/_bundle.mjs —— 若函数运行时找不到该文件请补上')
   }
 
   if (!cfg.rewrites?.length) bad('缺少 SPA rewrites —— 刷新 /admin 等子路由会 404')

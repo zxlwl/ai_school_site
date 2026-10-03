@@ -17,15 +17,19 @@
  * TS 编译链路。
  *
  * ── 产物与入口的协作方式 ───────────────────────────────────────
- *   真实实现 → api/index.mjs   （本脚本生成，已提交入库）
- *   函数入口 → api/index.ts    （薄壳，只 re-export 上面这个产物）
+ *   真实实现 → api/_bundle.mjs  （本脚本生成，已提交入库）
+ *   函数入口 → api/index.ts     （薄壳，只 re-export 上面这个产物）
+ *
+ * ⚠ 产物为何不叫 index.mjs？
+ *   Vercel CLI 会报「Two or more files have conflicting paths or names」——
+ *   api/index.mjs 与 api/index.ts 去掉扩展名后同名，被判为同一路径的两个
+ *   函数，构建直接失败（实测 CLI 62.1.0）。因此产物必须换名。
+ *   选 _bundle.mjs 而非 bundle.mjs：下划线前缀是 Vercel 约定的「非路由文件」
+ *   标记，能确保它不被当成第二个函数入口。
  *
  * 为什么入口不直接 import 后端源码？因为那样 Vercel 又会去编译整条 TS
  * 依赖树，绕回原问题。薄壳方案下，Vercel 编译 api/index.ts 时只看到一个
- * 指向 .mjs 的导入，配合 api/index.d.mts 类型声明即可零报错通过。
- *
- * 注：Vercel 会忽略 api/ 目录下的 .mjs/.mts 作为函数入口（只认 .ts/.js），
- * 所以 index.mjs 不会被误注册成第二个函数，两者同名并不冲突。
+ * 指向 .mjs 的导入，配合 _bundle.d.mts 类型声明即可零报错通过。
  *
  * ── 修改后端代码后 ─────────────────────────────────────────────
  *   npm run build:api
@@ -38,7 +42,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const outfile = join(root, 'api', 'index.mjs')
+const outfile = join(root, 'api', '_bundle.mjs')
 const realApp = join(root, 'apps', 'api', 'src', 'app.ts')
 
 if (!existsSync(realApp)) {
@@ -111,7 +115,7 @@ try {
   const size = statSync(outfile).size
   const inputs = Object.keys(result.metafile.inputs)
   const bundled = inputs.filter((p) => !p.includes('node_modules') && p !== 'vercel-entry.ts')
-  console.log(`✓ 后端函数已打包: api/index.mjs (${(size / 1024).toFixed(1)} KB)`)
+  console.log(`✓ 后端函数已打包: api/_bundle.mjs (${(size / 1024).toFixed(1)} KB)`)
   console.log(`  内联源文件 ${bundled.length} 个，外部依赖 ${EXTERNAL.length} 个`)
 
   const code = readFileSync(outfile, 'utf8')

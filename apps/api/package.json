@@ -1,0 +1,35 @@
+{
+  "name": "@school/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/server.local.ts",
+    "dev:cf": "wrangler dev",
+    "start": "tsx src/server.local.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "tsx scripts/push.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
+    "@hono/node-server": "^1.19.7",
+    "@neondatabase/serverless": "^1.2.0",
+    "@school/shared": "*",
+    "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.12",
+    "jose": "^6.2.12",
+    "postgres": "^3.4.9",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/node": "^26.6.4",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.146.0"
+  }
+}

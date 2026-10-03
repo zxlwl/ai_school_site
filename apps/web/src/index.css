@@ -1,0 +1,414 @@
+@import "tailwindcss";
+
+/*
+ * 主题系统
+ * ------------------------------------------------------------------
+ * 站点的全部视觉参数（主色、背景、圆角、字体、内容宽度）都由后端
+ * /api/public/settings 返回，前端通过 useTheme 把值写到 :root 的 CSS 变量上。
+ *
+ * 这样做的意义：管理员在后台改一个颜色，前台立刻生效，无需重新构建部署。
+ * Tailwind 的 @theme 只负责把变量映射成工具类（bg-primary、text-muted…），
+ * 具体取值一律来自下面的 CSS 变量。
+ */
+
+@theme {
+  --color-primary: var(--c-primary);
+  --color-primary-fg: var(--c-primary-fg);
+  --color-accent: var(--c-accent);
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-fg: var(--c-fg);
+  --color-muted: var(--c-muted);
+  --color-border: var(--c-border);
+
+  --radius-theme: var(--c-radius);
+  --font-theme: var(--c-font);
+  --container-theme: var(--c-container);
+}
+
+/* 默认值（Neon 主题），在 JS 注入真实值之前避免首屏闪烁 */
+:root {
+  --c-primary: #2563eb;
+  --c-primary-fg: #ffffff;
+  --c-accent: #0ea5e9;
+  --c-bg: #f8fafc;
+  --c-surface: #ffffff;
+  --c-fg: #0f172a;
+  --c-muted: #64748b;
+  --c-border: #e2e8f0;
+  --c-radius: 0.75rem;
+  --c-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --c-container: 72rem;
+
+  color-scheme: light;
+}
+
+/* 深色模式：由主题的 colorMode 决定加在 <html> 上的 class */
+html.dark {
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ */
+/* 基础样式                                                            */
+/* ------------------------------------------------------------------ */
+
+* {
+  border-color: var(--c-border);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background-color: var(--c-bg);
+  color: var(--c-fg);
+  font-family: var(--c-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.65;
+}
+
+/* 让后台长表单滚动时位置稳定 */
+body.modal-open {
+  overflow: hidden;
+}
+
+/* 滚动条：与主题色协调，不喧宾夺主 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--c-muted) 35%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--c-muted) 55%, transparent);
+  background-clip: content-box;
+}
+
+/* 键盘焦点可见性（无障碍要求） */
+:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 工具类                                                              */
+/* ------------------------------------------------------------------ */
+
+.container-theme {
+  width: 100%;
+  max-width: var(--c-container);
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 768px) {
+  .container-theme {
+    padding-inline: 1.5rem;
+  }
+}
+
+/* 卡片：统一的浮层样式 */
+.card-theme {
+  background-color: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius);
+}
+
+/* 主按钮 */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.15rem;
+  border-radius: var(--c-radius);
+  background-color: var(--c-primary);
+  color: var(--c-primary-fg);
+  font-weight: 500;
+  font-size: 0.9rem;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 次要按钮 */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.15rem;
+  border-radius: var(--c-radius);
+  background-color: transparent;
+  color: var(--c-fg);
+  border: 1px solid var(--c-border);
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+.btn-ghost:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--c-muted) 10%, transparent);
+  border-color: color-mix(in srgb, var(--c-muted) 35%, transparent);
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 表单控件 */
+.input-theme {
+  width: 100%;
+  padding: 0.55rem 0.8rem;
+  border-radius: var(--c-radius);
+  border: 1px solid var(--c-border);
+  background-color: var(--c-surface);
+  color: var(--c-fg);
+  font-size: 0.9rem;
+  font-family: inherit;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.input-theme:focus {
+  outline: none;
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-primary) 18%, transparent);
+}
+.input-theme::placeholder {
+  color: color-mix(in srgb, var(--c-muted) 75%, transparent);
+}
+
+/* 标签 */
+.badge-theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* 分割线 */
+.divider-theme {
+  height: 1px;
+  background-color: var(--c-border);
+  border: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* 文章正文排版                                                        */
+/* ------------------------------------------------------------------ */
+
+.prose-theme {
+  color: var(--c-fg);
+  font-size: 1.02rem;
+  line-height: 1.85;
+  word-wrap: break-word;
+}
+
+.prose-theme > *:first-child {
+  margin-top: 0;
+}
+
+.prose-theme h1,
+.prose-theme h2,
+.prose-theme h3,
+.prose-theme h4 {
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 2em;
+  margin-bottom: 0.75em;
+  scroll-margin-top: 5rem;
+}
+
+.prose-theme h1 {
+  font-size: 1.7rem;
+}
+.prose-theme h2 {
+  font-size: 1.4rem;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--c-border);
+}
+.prose-theme h3 {
+  font-size: 1.18rem;
+}
+.prose-theme h4 {
+  font-size: 1.05rem;
+}
+
+.prose-theme p {
+  margin: 1.15em 0;
+}
+
+.prose-theme a {
+  color: var(--c-primary);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--c-primary) 40%, transparent);
+  transition: border-color 0.18s ease;
+}
+.prose-theme a:hover {
+  border-bottom-color: var(--c-primary);
+}
+
+.prose-theme strong {
+  font-weight: 600;
+}
+
+.prose-theme ul,
+.prose-theme ol {
+  margin: 1.15em 0;
+  padding-left: 1.6em;
+}
+.prose-theme li {
+  margin: 0.4em 0;
+}
+.prose-theme ul li {
+  list-style: disc;
+}
+.prose-theme ol li {
+  list-style: decimal;
+}
+.prose-theme li::marker {
+  color: color-mix(in srgb, var(--c-muted) 90%, transparent);
+}
+
+.prose-theme blockquote {
+  margin: 1.5em 0;
+  padding: 0.85em 1.15em;
+  border-left: 3px solid var(--c-primary);
+  background-color: color-mix(in srgb, var(--c-primary) 6%, transparent);
+  border-radius: 0 var(--c-radius) var(--c-radius) 0;
+  color: color-mix(in srgb, var(--c-fg) 88%, var(--c-muted));
+}
+.prose-theme blockquote p {
+  margin: 0.35em 0;
+}
+
+.prose-theme code {
+  font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.88em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--c-muted) 14%, transparent);
+}
+
+.prose-theme pre {
+  margin: 1.5em 0;
+  padding: 1em 1.15em;
+  border-radius: var(--c-radius);
+  background-color: #0f172a;
+  color: #e2e8f0;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+.prose-theme pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.prose-theme img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--c-radius);
+  margin: 1.5em auto;
+  display: block;
+}
+
+.prose-theme table {
+  width: 100%;
+  margin: 1.5em 0;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  display: block;
+  overflow-x: auto;
+}
+.prose-theme th,
+.prose-theme td {
+  padding: 0.6em 0.85em;
+  border: 1px solid var(--c-border);
+  text-align: left;
+}
+.prose-theme th {
+  background-color: color-mix(in srgb, var(--c-muted) 8%, transparent);
+  font-weight: 600;
+}
+.prose-theme tbody tr:nth-child(even) {
+  background-color: color-mix(in srgb, var(--c-muted) 4%, transparent);
+}
+
+.prose-theme hr {
+  margin: 2.5em 0;
+  border: none;
+  height: 1px;
+  background-color: var(--c-border);
+}
+
+/* ------------------------------------------------------------------ */
+/* 动画                                                                */
+/* ------------------------------------------------------------------ */
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.45s ease both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease both;
+}
+
+/* 尊重用户的"减少动态效果"系统设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

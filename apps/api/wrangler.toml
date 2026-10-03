@@ -1,0 +1,30 @@
+# Cloudflare Workers 配置
+#
+# 部署步骤：
+#   1. npx wrangler login
+#   2. 修改下方 name 为你的 Worker 名称
+#   3. 用 `npx wrangler secret put DATABASE_URL` 等方式设置密钥
+#      （密钥不要写在本文件里，本文件会进 Git）
+#   4. npx wrangler deploy
+#
+# 重要限制：Workers 无法建立 TCP 连接，DATABASE_URL 必须指向 Neon
+# 或其它 HTTP 兼容的 Postgres 服务。普通 VPS 上的 Postgres 连不上。
+
+name = "school-site-api"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 非敏感变量写在这里；敏感变量用 wrangler secret put 设置
+[vars]
+# 前端域名，多个用英文逗号分隔
+CORS_ORIGIN = "https://your-frontend.pages.dev"
+# 图片默认内联进数据库，无需 R2 等需绑定信用卡的服务
+STORAGE_DRIVER = "dataurl"
+
+[observability]
+enabled = true
+
+# 设置密钥的命令（依次执行）：
+#   npx wrangler secret put DATABASE_URL
+#   npx wrangler secret put AUTH_SECRET

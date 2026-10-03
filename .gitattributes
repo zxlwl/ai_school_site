@@ -1,0 +1,24 @@
+# 统一换行符，避免 Windows / Linux 之间来回转换产生噪音
+# 文本文件统一以 LF 存入仓库（Vercel / Cloudflare 均为 Linux）
+* text=auto eol=lf
+
+# 二进制文件不做换行符转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.node binary
+
+# Windows 专用脚本保留 CRLF（本地直接双击运行）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# lock 文件不参与 diff 统计，避免污染 PR 视图
+package-lock.json linguist-generated=true -diff

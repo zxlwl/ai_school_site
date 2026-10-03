@@ -1,0 +1,25 @@
+{
+  "name": "school-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "现代化学校官网 · 前后端分离 · 可部署 Vercel / Cloudflare",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev:api & npm run dev:web",
+    "dev:api": "npm --workspace @school/api run dev",
+    "dev:web": "npm --workspace @school/web run dev",
+    "build": "npm --workspace @school/web run build",
+    "db:generate": "npm --workspace @school/api run db:generate",
+    "db:push": "npm --workspace @school/api run db:push",
+    "db:seed": "npm --workspace @school/api run db:seed",
+    "typecheck": "npm --workspaces --if-present run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@11"
+}

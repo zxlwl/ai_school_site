@@ -192,6 +192,57 @@ if (!existsSync(vcConfig)) {
   }
 }
 
+/*
+ * ── 函数目录的模块格式（Vercel 上 FUNCTION_INVOCATION_FAILED 的头号原因）──
+ *
+ * tsc 编出的 app.js 是标准 ESM（`export const app = createApp()`），
+ * 但产物搬进 index.func/ 后那个目录里没有 package.json，
+ * Node 找不到 "type": "module" 就按 CommonJS 解析，于是 Vercel 上加载入口直接崩：
+ *   SyntaxError: Named export 'app' not found. The requested module './app.js'
+ *   is a CommonJS module...
+ *
+ * 本地 Node 版本越新对 ESM/CJS 互操作越宽松，本地跑得通、Vercel 崩，
+ * 所以必须显式断言，不能靠本地运行结果。
+ */
+{
+  const fmtPkg = join(funcDir, 'package.json')
+  let declaresModule = false
+  if (!existsSync(fmtPkg)) {
+    bad('函数目录缺少 package.json —— 产物 .js 会被当成 CommonJS，'
+      + "Vercel 上会报 SyntaxError: Named export 'app' not found")
+  } else {
+    const p = JSON.parse(readFileSync(fmtPkg, 'utf8'))
+    declaresModule = p.type === 'module'
+    if (declaresModule) {
+      ok('函数目录 package.json 声明 type = "module"（与 tsc 的 ESM 产物一致）')
+    } else {
+      bad(`函数目录 package.json 的 type = ${JSON.stringify(p.type)}，应为 "module"`)
+    }
+  }
+
+  function walkEmitted(d, acc = []) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules') continue
+      const p = join(d, e.name)
+      if (e.isDirectory()) walkEmitted(p, acc)
+      else if (e.name.endsWith('.js')) acc.push(p)
+    }
+    return acc
+  }
+
+  const emitted = existsSync(funcDir) ? walkEmitted(funcDir) : []
+  const esmCount = emitted.filter((f) => {
+    const c = readFileSync(f, 'utf8')
+    return /^\s*export\s/m.test(c) || /^\s*import\s/m.test(c)
+  }).length
+
+  if (esmCount > 0 && !declaresModule) {
+    bad(`产物中有 ${esmCount} 个 .js 使用 ESM 语法，但没有 type=module —— Vercel 会当成 CommonJS 加载`)
+  } else if (esmCount > 0) {
+    ok(`产物中 ${esmCount} 个 ESM 模块的解析方式已正确声明`)
+  }
+}
+
 // 确认构建脚本会生成产物
 const rootPkgEarly = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const buildEarly = rootPkgEarly.scripts?.build ?? ''

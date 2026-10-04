@@ -66,18 +66,65 @@ export function createApp() {
   /* 健康检查                                                        */
   /* -------------------------------------------------------------- */
 
-  app.get('/api/health', (c) =>
-    c.json({
-      data: {
-        ok: true,
-        service: 'school-site-api',
-        runtime: typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
-          ? 'cloudflare-workers'
-          : 'node',
-        time: new Date().toISOString(),
+  /**
+   * 健康检查同时充当**部署诊断**。
+   *
+   * 踩过的坑：Vercel 上环境变量没配时，首页请求 /api/public/home 会 500，
+   * 浏览器只看到一个笼统的错误页，很难判断到底是代码问题还是配置问题。
+   * 这里把「关键变量有没有配」直接暴露出来（只报有无与长度，绝不打印值），
+   * 再顺手探一次数据库连通性，让问题一眼可见。
+   */
+  app.get('/api/health', async (c) => {
+    const checks: Record<string, string> = {}
+
+    const dbUrl = process.env.DATABASE_URL ?? ''
+    const secret = process.env.AUTH_SECRET ?? ''
+
+    checks.DATABASE_URL = dbUrl
+      ? `已配置（长度 ${dbUrl.length}${
+          /neon\.tech|neon\.build/.test(dbUrl) ? '，Neon HTTP 驱动' : '，postgres-js 驱动'
+        }）`
+      : '缺失 —— 所有需要数据库的接口都会返回 500'
+
+    checks.AUTH_SECRET = secret
+      ? `已配置（长度 ${secret.length}）`
+      : '缺失 —— 后台登录无法工作'
+
+    // 真正探一次库，把「配置存在但连不上」也区分出来
+    let database = '未检测'
+    if (dbUrl) {
+      try {
+        const { getDb } = await import('./db/client')
+        const { sql } = await import('drizzle-orm')
+        await getDb().execute(sql`select 1`)
+        database = '连接正常'
+      } catch (error) {
+        database = `连接失败：${error instanceof Error ? error.message : String(error)}`
+      }
+    } else {
+      database = '跳过（DATABASE_URL 未配置）'
+    }
+
+    const healthy = Boolean(dbUrl && secret) && database === '连接正常'
+
+    return c.json(
+      {
+        data: {
+          ok: healthy,
+          service: 'school-site-api',
+          runtime:
+            typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+              ? 'cloudflare-workers'
+              : 'node',
+          node: process.version,
+          env: checks,
+          database,
+          time: new Date().toISOString(),
+        },
       },
-    }),
-  )
+      healthy ? 200 : 503,
+    )
+  })
 
   app.get('/', (c) =>
     c.json({

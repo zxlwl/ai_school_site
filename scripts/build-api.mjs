@@ -117,6 +117,27 @@ step(`  修正 ${fixedFiles} 个文件、${fixedSpecs} 处导入`)
 
 // ── 5. 写函数入口（薄壳）────────────────────────────────────────
 step('写入函数入口 index.mjs …')
+
+/*
+ * ── 函数目录必须自带 package.json ───────────────────────────────
+ *
+ * apps/api/package.json 里写着 "type": "module"，tsc 编出的 dist/*.js 都是
+ * 标准 ESM（`export const app = createApp()`）。但产物被搬到
+ * .vercel/output/functions/index.func/ 之后，那个目录里**没有 package.json**，
+ * Node 找不到 "type": "module"，就按 CommonJS 解析所有 .js。
+ *
+ * 后果是 Vercel 上加载入口直接崩：
+ *   SyntaxError: Named export 'app' not found. The requested module './app.js'
+ *   is a CommonJS module, which may not support all module.exports as named exports.
+ *
+ * 注意这个坑在本地很难发现：Node 版本越新，对 ESM/CJS 互操作的判定越宽松，
+ * 本地（Node 26）能跑，Vercel（Node 20/24）就崩。所以必须显式声明。
+ */
+writeFileSync(
+  join(funcDir, 'package.json'),
+  JSON.stringify({ type: 'module' }, null, 2) + '\n',
+)
+
 writeFileSync(
   join(funcDir, 'index.mjs'),
   `// 由 scripts/build-api.mjs 自动生成，请勿手动编辑。

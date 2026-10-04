@@ -204,11 +204,29 @@ depCount++
 step(`  已复制 ${depCount} 个包（含手写的 @school/shared 运行时副本）`)
 
 // ── 7. 写 .vc-config.json ───────────────────────────────────────
+/*
+ * ── runtime 版本必须跟着 Vercel 的停用节奏走 ────────────────────
+ *
+ * @vercel/build-utils 的 fs/node-version.js 里写着每个大版本的 discontinueDate：
+ *   nodejs24.x  （当前最新）
+ *   nodejs22.x
+ *   nodejs20.x  discontinueDate: 2026-10-01   ← 已停用
+ *   nodejs18.x  discontinueDate: 2025-09-01
+ * 而 collect-build-result/validate-build-result.js 的 SUPPORTED_AL2023_RUNTIMES
+ * 只列了 nodejs20.x / nodejs22.x / nodejs24.x。
+ *
+ * 所以 nodejs20.x 虽然仍能通过校验，但已过停用日，部署时会打印：
+ *   "You are using a custom Runtime that depends on nodejs20.x,
+ *    which is discontinued. Please upgrade your Runtime..."
+ * 这里直接用 24.x。
+ */
+const RUNTIME = 'nodejs24.x'
+
 writeFileSync(
   join(funcDir, '.vc-config.json'),
   JSON.stringify(
     {
-      runtime: 'nodejs20.x',
+      runtime: RUNTIME,
       handler: 'index.mjs',
       launcherType: 'Nodejs',
       shouldAddHelpers: true,

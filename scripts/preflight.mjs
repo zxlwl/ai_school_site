@@ -168,6 +168,28 @@ if (!existsSync(vcConfig)) {
   const vcc = JSON.parse(readFileSync(vcConfig, 'utf8'))
   if (vcc.launcherType !== 'Nodejs') bad(`launcherType 应为 Nodejs，实际 ${vcc.launcherType}`)
   else ok(`.vc-config.json: runtime=${vcc.runtime} handler=${vcc.handler} launcherType=Nodejs`)
+
+  /*
+   * ── runtime 版本会过期，必须显式校验 ──────────────────────────
+   * @vercel/build-utils 的 fs/node-version.js 给每个大版本标了 discontinueDate：
+   *   nodejs24.x  （当前）
+   *   nodejs22.x
+   *   nodejs20.x  → 2026-10-01（已停用）
+   *   nodejs18.x  → 2025-09-01
+   * 过了停用日仍能通过校验，但部署时会打印
+   *   "You are using a custom Runtime that depends on nodejsXX.x, which is
+   *    discontinued. Please upgrade your Runtime..."
+   * 这不会让部署失败，所以极易被忽略——曾经就漏看过一次。
+   */
+  const DEPRECATED = { 'nodejs18.x': '2025-09-01', 'nodejs20.x': '2026-10-01' }
+  if (DEPRECATED[vcc.runtime]) {
+    bad(`runtime = ${vcc.runtime} 已于 ${DEPRECATED[vcc.runtime]} 停止支持 —— `
+      + '部署时会打印 discontinued 警告，请改用 nodejs24.x（build-api.mjs 里的 RUNTIME 常量）')
+  } else if (!/^nodejs\d+\.x$/.test(vcc.runtime ?? '')) {
+    bad(`runtime = ${vcc.runtime} 不是有效的 nodejs*.x 形式`)
+  } else {
+    ok(`runtime ${vcc.runtime} 在当前支持期内`)
+  }
 }
 
 // 确认构建脚本会生成产物

@@ -294,7 +294,7 @@ node scripts/verify-build-output.mjs # 验收 .vercel/output/（目录、路由�
 .vercel/output/
 ├── config.json                          # 路由：filesystem → /api/* → SPA 兜底
 ├── functions/index.func/
-│   ├── .vc-config.json                  # runtime: nodejs20.x, launcherType: Nodejs
+│   ├── .vc-config.json                  # runtime: nodejs24.x, launcherType: Nodejs
 │   ├── index.mjs                        # 入口薄壳：handle(app)
 │   ├── app.js  routes/…  lib/…  db/…    # apps/api/dist 的编译产物
 │   └── node_modules/                    # 9 个运行时依赖（含手写的 @school/shared 副本）
@@ -323,6 +323,36 @@ node scripts/verify-build-output.mjs # 验收 .vercel/output/（目录、路由�
 
 *判断 Vercel 是否真的跳过了函数*：部署日志里搜 `TS2835`。
 若有 → 说明仓库里又出现了 `api/` 目录，Vercel 重新介入了 TS 编译，把它删掉。
+
+---
+
+**Q：部署成功，但日志末尾出现 `You are using a custom Runtime that depends on
+nodejsXX.x, which is discontinued`**
+
+这**不会让部署失败**，但说明函数用的 Node 版本已经过了 Vercel 的停用日，
+随时可能被强制下线，所以必须处理。
+
+*根因*：`.vc-config.json` 里的 `runtime` 是写死的。Vercel 在
+`@vercel/build-utils/fs/node-version.js` 中给每个大版本标了停用日期：
+
+| runtime | 停用日 |
+|---|---|
+| `nodejs24.x` | 当前最新 |
+| `nodejs22.x` | — |
+| `nodejs20.x` | 2026-10-01 |
+| `nodejs18.x` | 2025-09-01 |
+
+而 `collect-build-result/validate-build-result.js` 里的 `SUPPORTED_AL2023_RUNTIMES`
+同时列着 `nodejs20.x` / `nodejs22.x` / `nodejs24.x` —— 所以**过了停用日仍能通过
+校验**，只是多打一行警告。这正是它容易被忽略的原因。
+
+*解法*：改 `scripts/build-api.mjs` 里的 `RUNTIME` 常量（当前 `nodejs24.x`），
+同时把根 `package.json` 的 `engines.node` 对齐成 `"24.x"`。
+
+> `engines` 建议写 `"24.x"` 而不是 `">=20"`：后者会让 Vercel 每次 Node 发布新大版本
+> 时自动升级，并且每次构建都打印一条 warning。
+
+`scripts/preflight.mjs` 已把停用版本列为阻断项，不会再静默漏过。
 
 ---
 

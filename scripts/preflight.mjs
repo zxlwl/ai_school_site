@@ -65,44 +65,109 @@ const vcConfig = join(funcDir, '.vc-config.json')
 if (!existsSync(funcEntry)) {
   bad('缺少 .vercel/output/functions/index.func/index.mjs —— 请先运行 npm run build:api')
 } else {
-  const size = statSync(funcEntry).size
-  ok(`函数产物存在（${(size / 1024).toFixed(1)} KB）`)
+  ok(`函数入口存在（${(statSync(funcEntry).size / 1024).toFixed(1)} KB）`)
 
-  // 产物必须是自包含的：有任何相对导入都会在 Serverless 运行时崩
-  const code = readFileSync(funcEntry, 'utf8')
-  const relImports = code.match(/^\s*(?:import|export)[^;]*?from\s*['"]\.\.?\//gm)
-  if (relImports) {
-    bad(`产物含 ${relImports.length} 处相对导入 —— Serverless 运行时无法解析，请重新 npm run build:api`)
+  /*
+   * ── 为什么是「多文件 + 运行时依赖」而不是单文件产物 ────────────
+   *
+   * 之前用 esbuild 把后端打成单文件。esbuild 是原生二进制包，构建时要派生
+   * 子进程执行平台相关可执行文件 —— 在 Vercel 构建机上这条路径反复静默失败
+   * （日志停在 `> node scripts/build-api.mjs` 后一片空白，无法定位）。
+   *
+   * 现在改用纯 JS 链路：tsc 编译 → 纯 Node 搬运。构建期不执行任何原生二进制。
+   * 代价是产物变成多文件 + 需要带上运行时依赖，因此下面这几项检查很关键。
+   */
+
+  // 1) 相对导入必须都带扩展名，否则 Node ESM 直接 ERR_MODULE_NOT_FOUND
+  let extOk = 0
+  let extBad = []
+  const walkJs = (d, acc = []) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules') continue
+      const p = join(d, e.name)
+      if (e.isDirectory()) walkJs(p, acc)
+      else if (e.name.endsWith('.js') || e.name.endsWith('.mjs')) acc.push(p)
+    }
+    return acc
+  }
+  for (const f of walkJs(funcDir)) {
+    const code = readFileSync(f, 'utf8')
+    for (const m of code.matchAll(/((?:from|import)\s*\(?\s*['"])(\.\.?\/[^'"]+?)(['"])/g)) {
+      if (/\.(js|mjs|cjs|json)$/.test(m[2])) extOk++
+      else extBad.push(`${f.replace(root, '').replace(/\\/g, '/')} → ${m[2]}`)
+    }
+  }
+  if (extBad.length) {
+    bad(`产物有 ${extBad.length} 处相对导入缺扩展名 —— Node ESM 会 ERR_MODULE_NOT_FOUND：\n      ${extBad.slice(0, 4).join('\n      ')}`)
   } else {
-    ok('产物自包含：无相对导入')
+    ok(`产物相对导入全部带扩展名（${extOk} 处）—— Node ESM 可直接解析`)
   }
 
-  // @school/shared 以裸 TS 发布，必须已被内联进产物
-  if (/from\s*['"]@school\/shared['"]/.test(code)) {
-    bad('产物仍引用 @school/shared —— 该包发布裸 TS，函数加载即崩')
+  // 2) 运行时依赖必须随函数一起上传
+  const funcNm = join(funcDir, 'node_modules')
+  if (!existsSync(funcNm)) {
+    bad('函数目录缺 node_modules —— Vercel 不会为 Build Output API 函数自动安装依赖，运行时会 Cannot find package')
   } else {
-    ok('产物已内联 @school/shared（无裸 TS 引用）')
+    const pkgs = readdirSync(funcNm, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .flatMap((e) => {
+        if (!e.name.startsWith('@')) return [e.name]
+        return readdirSync(join(funcNm, e.name)).map((s) => `${e.name}/${s}`)
+      })
+    const needed = ['hono', 'drizzle-orm', 'postgres', 'bcryptjs', 'jose', 'zod']
+    const missing = needed.filter((n) => !pkgs.includes(n))
+    if (missing.length) bad(`函数 node_modules 缺关键依赖：${missing.join(', ')}`)
+    else ok(`函数运行时依赖已就位（${pkgs.length} 个包）`)
   }
 
-  // 中文曾被 PowerShell 往返读写破坏过，这里留一道防线
-  const fffd = [...code.matchAll(/\uFFFD/g)].length
+  /*
+   * @school/shared 是 npm workspace，在根 node_modules 里只是符号链接。
+   * Vercel 不会把工作区软链的内容带进函数目录，所以 build-api.mjs 会把它的
+   * 编译产物（单文件、零依赖）拷成函数内的一个真实副本。
+   *
+   * 因此这里检查的不是「有没有引用」，而是「这份引用在运行时能不能解析到」。
+   */
+  const sharedRuntime = join(funcDir, 'node_modules', '@school', 'shared')
+  const sharedRuntimeEntry = join(sharedRuntime, 'dist', 'index.js')
+  let refCount = 0
+  for (const f of walkJs(funcDir)) {
+    const code = readFileSync(f, 'utf8')
+    refCount += [...code.matchAll(/from\s*['"]@school\/shared['"]/g)].length
+    refCount += [...code.matchAll(/import\s*\(\s*['"]@school\/shared['"]/g)].length
+  }
+
+  if (!existsSync(sharedRuntimeEntry)) {
+    bad(`函数目录缺 @school/shared 运行时副本（引用 ${refCount} 处）—— `
+      + 'workspace 软链不会被上传，运行时会 Cannot find package')
+  } else {
+    const sc = readFileSync(sharedRuntimeEntry, 'utf8')
+    if (/from\s*['"]\.\.?\//.test(sc) || /\brequire\s*\(/.test(sc)) {
+      bad('@school/shared 运行时副本含相对导入或 require —— 它必须是自包含单文件')
+    } else {
+      ok(`@school/shared 已内联为自包含副本（${refCount} 处引用可解析，${(sc.length / 1024).toFixed(1)} KB）`)
+    }
+  }
+
+  // 4) 中文曾被 PowerShell 往返读写破坏过，这里留一道防线
+  let fffd = 0
+  for (const f of walkJs(funcDir)) {
+    fffd += [...readFileSync(f, 'utf8').matchAll(/\uFFFD/g)].length
+  }
   if (fffd > 0) bad(`产物含 ${fffd} 个 U+FFFD 替换字符，中文已损坏，请重新 build:api`)
   else ok('产物编码无损（U+FFFD: 0）')
 
-  // 默认导出必须是函数，否则调用时 500
-  if (/export\s*\{[^}]*\bdefault\b[^}]*\}/.test(code) || /export\s+default\b/.test(code)) {
-    ok('产物已导出 default 处理器')
-  } else {
-    bad('产物未导出 default 处理器')
-  }
+  // 5) 入口必须 default 导出可调用的 fetch handler
+  const entryCode = readFileSync(funcEntry, 'utf8')
+  if (/export\s+default\b/.test(entryCode)) ok('入口已导出 default 处理器')
+  else bad('入口未导出 default 处理器')
 }
 
 if (!existsSync(vcConfig)) {
   bad('缺少 .vc-config.json —— Vercel 不知道如何运行该函数')
 } else {
-  const vc = JSON.parse(readFileSync(vcConfig, 'utf8'))
-  if (vc.launcherType !== 'Nodejs') bad(`launcherType 应为 Nodejs，实际 ${vc.launcherType}`)
-  else ok(`.vc-config.json: runtime=${vc.runtime} handler=${vc.handler} launcherType=Nodejs`)
+  const vcc = JSON.parse(readFileSync(vcConfig, 'utf8'))
+  if (vcc.launcherType !== 'Nodejs') bad(`launcherType 应为 Nodejs，实际 ${vcc.launcherType}`)
+  else ok(`.vc-config.json: runtime=${vcc.runtime} handler=${vcc.handler} launcherType=Nodejs`)
 }
 
 // 确认构建脚本会生成产物
@@ -113,10 +178,27 @@ if (/build:api/.test(buildEarly)) {
 } else {
   bad(`根 build 脚本未包含 build:api（当前：${buildEarly}）—— Vercel 不会生成函数产物`)
 }
-if (/&&/.test(buildEarly) && buildEarly.indexOf('build:api') > buildEarly.indexOf('@school/web')) {
-  ok('build:api 排在 web build 之后（能读到 apps/web/dist 填充 static/）')
-} else if (/build:api/.test(buildEarly)) {
-  bad('build:api 未排在 web build 之后 —— static/ 会拿不到前端产物，站点空白')
+if (/build-api\.mjs/.test(buildEarly)) {
+  ok('根 build 脚本在最后执行 scripts/build-api.mjs（读取 apps/web/dist 填充 static/）')
+} else {
+  bad('根 build 脚本末尾未直接调用 scripts/build-api.mjs —— static/ 拿不到前端产物，站点会空白')
+}
+// 构建期绝不能再依赖 esbuild（原生二进制在 Vercel 上反复静默失败）
+const allDeps = {
+  ...(rootPkgEarly.dependencies ?? {}),
+  ...(rootPkgEarly.devDependencies ?? {}),
+}
+if (allDeps.esbuild) {
+  bad(`根 package.json 仍依赖 esbuild（${allDeps.esbuild}）—— 原生二进制在 Vercel 构建机上会静默失败，请移除`)
+} else {
+  ok('根 package.json 无 esbuild 依赖（构建期不执行原生二进制）')
+}
+for (const ws of ['apps/api', 'apps/web', 'packages/shared']) {
+  const wp = join(root, ws, 'package.json')
+  if (!existsSync(wp)) continue
+  const w = JSON.parse(readFileSync(wp, 'utf8'))
+  const d = { ...(w.dependencies ?? {}), ...(w.devDependencies ?? {}) }
+  if (d.esbuild) bad(`${ws}/package.json 仍依赖 esbuild（${d.esbuild}）—— 请移除`)
 }
 
 /* ---------------------------------------------------------------- */

@@ -245,29 +245,21 @@ ECMAScript imports when '--moduleResolution' is 'node16'
 `Deployment completed`，只是把函数打包那一步**静默跳过**了 —— 于是
 `/api/*` 全部 404，而日志里没有任何醒目的失败提示。
 
-*本项目的解法（已内置）*：不让 Vercel 碰任何 TS 源码，改为「预打包 + 薄壳入口」。
+*本项目的解法（已内置）*：**仓库里完全不放 `api/` 目录**，且构建期不执行任何
+原生二进制。函数由 `scripts/build-api.mjs` 直接产出到 `.vercel/output/`。
 
 | 文件 | 角色 |
 |---|---|
-| `scripts/build-api.mjs` | 用 esbuild 把整个后端打成自包含的 `api/_bundle.mjs` |
-| `api/_bundle.mjs` | 真正的实现，**已入库**（Vercel 构建前就扫描 `api/`，产物必须已存在） |
-| `api/index.ts` | 薄壳，只 `export { default } from './_bundle.mjs'` |
-| `api/_bundle.d.mts` | 薄壳导入 `.mjs` 的类型声明（否则报 TS7016） |
+| `apps/api/tsconfig.build.json` | 把后端 TS 编译成真实 `.js` 到 `apps/api/dist/` |
+| `scripts/build-api.mjs` | 纯 Node 搬运：编译产物 → `.vercel/output/`，补扩展名、带运行时依赖 |
+| `.vercel/output/functions/index.func/` | 函数（多文件 + `node_modules/`），由脚本生成，**不入库** |
 
-`api/_bundle.mjs` 零相对导入、零 `require`，只引用 npm 包名，并已内联
-`@school/shared`（该包以裸 TS 发布，Serverless 运行时无法解析）。
-`vercel.json` 里用 `includeFiles: "api/_bundle.mjs"` 确保产物随函数上传。
-
-> **产物为什么叫 `_bundle.mjs` 而不是 `index.mjs`？**
-> Vercel CLI 会按「去掉扩展名后的路径」判断函数是否重名，`api/index.mjs`
-> 与 `api/index.ts` 因此被判为同一路径的两个函数，构建**直接失败**：
-> ```
-> Error: Two or more files have conflicting paths or names. Please make sure
-> path segments and filenames, without their extension, are unique.
-> The path "api/index.mjs" has conflicts with "api/index.ts".
-> ```
-> 改名后还要加下划线前缀：`_` 开头是 Vercel 约定的「非路由文件」标记，
-> 确保产物不被注册成第二个函数入口。
+> **为什么不再用 esbuild 打成单文件？**
+> esbuild 是原生二进制包，构建时要派生子进程执行平台相关的可执行文件
+> （`@esbuild/linux-x64`）。在 Vercel 构建机上这条路径**反复静默失败**：
+> 日志停在 `> node scripts/build-api.mjs` 之后一片空白，既没有错误输出、
+> 也拿不到退出码，本地却完全无法复现。
+> 现在整条链路只有 `tsc`（纯 JS）+ Node 文件操作，构建期不碰任何原生二进制。
 
 *你要做什么*：正常情况下**什么都不用做** —— 根 `npm run build` 已串入
 `build:api`，Vercel 构建时自动生成产物。只需在改完后端代码后记得重新部署。
@@ -275,9 +267,8 @@ ECMAScript imports when '--moduleResolution' is 'node16'
 *如何自查*：
 
 ```bash
-node scripts/preflight.mjs          # 6 段自检，覆盖整条产物链（含命名冲突检查）
+node scripts/preflight.mjs           # 6 段自检，覆盖整条产物链
 node scripts/verify-build-output.mjs # 验收 .vercel/output/（目录、路由次序、函数调用）
-node scripts/verify-bundle.mjs      # 在纯 Node 下实测打包产物与各路由
 ```
 
 > 为什么必须用**纯 Node** 验收，而不是 `tsx`：`tsx` 会即时编译 TS，
@@ -304,7 +295,9 @@ node scripts/verify-bundle.mjs      # 在纯 Node 下实测打包产物与各路
 ├── config.json                          # 路由：filesystem → /api/* → SPA 兜底
 ├── functions/index.func/
 │   ├── .vc-config.json                  # runtime: nodejs20.x, launcherType: Nodejs
-│   └── index.mjs                        # 函数实现（复制自 api/_bundle.mjs）
+│   ├── index.mjs                        # 入口薄壳：handle(app)
+│   ├── app.js  routes/…  lib/…  db/…    # apps/api/dist 的编译产物
+│   └── node_modules/                    # 9 个运行时依赖（含手写的 @school/shared 副本）
 └── static/                              # 前端产物（必须显式复制！）
     ├── index.html
     └── assets/...
@@ -313,22 +306,23 @@ node scripts/verify-bundle.mjs      # 在纯 Node 下实测打包产物与各路
 因此 `vercel.json` 现在只剩三行有效配置（`buildCommand` / `installCommand` /
 `framework`），`outputDirectory`、`rewrites`、`functions` 全部移交 `config.json`。
 
-> **两个容易漏掉的点**
+> **三个容易漏掉的点**
 >
 > 1. **前端必须显式复制进 `static/`**。切到 Build Output API 后
 >    `outputDirectory` 不再生效，而 `{ handle: 'filesystem' }` 只查
 >    `.vercel/output/static/`。漏掉这步的后果是：函数能跑，但整站空白。
-> 2. **构建顺序**：`build:shared` → **web build** → `build:api`。
->    `build:api` 现在要读 `apps/web/dist` 来填充 `static/`，必须排在前面。
+> 2. **构建顺序**：`build:shared` → `build:api`（tsc 编译）→ **web build** →
+>    `node scripts/build-api.mjs`。最后一步要读 `apps/web/dist` 填充 `static/`。
+> 3. **相对导入必须带 `.js` 后缀**。源码里 31 处相对导入都没写扩展名，而 Node
+>    ESM 强制要求。`build-api.mjs` 搬运时会统一重写补上 —— 这是它存在的主要理由。
 
 路由次序也不能错：`filesystem` 必须在 `/api/*` 之前（否则静态资源被函数抢走），
 `/api/*` 必须在 SPA 兜底之前（否则接口被 SPA 吞掉、永远返回 HTML）。
 `scripts/verify-build-output.mjs` 会校验这三者的顺序。
 
 
-*判断 Vercel 是否真的跳过了函数*：部署日志里搜 `TS2835`。有 → 说明产物链
-断了，检查 `api/_bundle.mjs` 是否已提交、根 `build` 脚本是否含 `build:api`。
-若报 `conflicting paths`，则是 `api/` 下有两个去扩展名同名的文件。
+*判断 Vercel 是否真的跳过了函数*：部署日志里搜 `TS2835`。
+若有 → 说明仓库里又出现了 `api/` 目录，Vercel 重新介入了 TS 编译，把它删掉。
 
 ---
 

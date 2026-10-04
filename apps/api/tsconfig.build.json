@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"],
+
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "verbatimModuleSyntax": false,
+
+    /* 源码的相对导入都没写扩展名（31 处），而 NodeNext 强制要求。
+       完整重写这 31 处侵入面太大，这里用 TypeScript 自带的
+       rewriteRelativeImportExtensions 在**编译期**补上 `.js`——
+       TS 5.7+ 特性，正是 @vercel/node 内部用的同一开关。
+       这样源码保持可读，产物则是 Node 能直接加载的规范 ESM。 */
+    "rewriteRelativeImportExtensions": true,
+
+    /* 产物会被 scripts/build-api.mjs 逐字节重写（补扩展名、搬运），
+       不做类型检查报错阻断——真正的类型检查交给 tsconfig.json。 */
+    "noCheck": true,
+
+    /* drizzle 的部分签名在 strict 下会对未注解的 map 回调报隐式 any
+       （如 admin.ts 里 30+ 处 row/candidate）。这些回调的类型由
+       drizzle 泛型推断，源码本身没问题，构建期不必再报。 */
+    "strict": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

@@ -279,6 +279,24 @@ writeFileSync(
  *   1. filesystem  —— 静态资源优先，否则前端 assets 会被函数抢走
  *   2. /api/(.*)   —— 所有接口交给函数
  *   3. /(.*)       —— 其余交给 SPA 兜底，否则刷新 /admin 等子路由会 404
+ *
+ * ── dest 必须写 '/index'，不是 '/api/index'（踩过的坑）──────────
+ *
+ * Build Output API 里函数的标识就是目录名去掉 .func：
+ *     functions/index.func/  →  函数名 "index"
+ * dest 的第一段是**函数名**，不是路径分组：
+ *     { src: '/api/(.*)', dest: '/index' }        ✓
+ *     { src: '/api/(.*)', dest: '/api/index' }    ✗ 被当成名为 "api" 的函数
+ *
+ * 写错的表现非常迷惑，因为函数其实加载成功了、只是接不到请求：
+ *     /            → 返回函数根路由的 JSON（函数确实在跑）
+ *     /api         → SPA HTML
+ *     /api/health  → 404 NOT_FOUND（dest 指向不存在的函数 "api"）
+ * 看上去像"前端坏了 / 静态产物没传"，实际是路由 dest 写错。
+ *
+ * 用 dest: '/index' 时不带捕获组，Vercel 会把**原始路径原样**交给函数，
+ * 所以函数收到的仍是 /api/health —— 这正是 Hono 注册路由时用的前缀
+ * （前端 BASE = '/api' 也是同一约定）。
  */
 writeFileSync(
   join(outDir, 'config.json'),
@@ -287,7 +305,7 @@ writeFileSync(
       version: 3,
       routes: [
         { handle: 'filesystem' },
-        { src: '/api/(.*)', dest: '/api/index' },
+        { src: '/api/(.*)', dest: '/index' },
         { src: '/(.*)', dest: '/index.html' },
       ],
     },

@@ -385,6 +385,30 @@ if (!existsSync(vc)) {
     } else {
       bad(`Build Output config.json 路由不全（filesystem:${hasFs} api:${hasApi} spa:${hasSpa}）`)
     }
+
+    /*
+     * ── API 路由的 dest 必须是函数名本身 ──────────────────────────
+     *
+     * Build Output API 的函数名 = functions/<name>.func 的 <name>，
+     * dest 的第一段就是函数名。写成 '/api/index' 会被当成名为 "api" 的函数，
+     * 于是接口全部 404，而函数其实加载正常 —— 症状极像"前端坏了"。
+     */
+    const apiRoute = routes.find((r) => String(r.src).includes('/api/'))
+    if (apiRoute) {
+      const dest = String(apiRoute.dest ?? '')
+      const name = dest.split('/').filter(Boolean)[0] ?? ''
+      const fnDir = join(outDir, 'functions', `${name}.func`)
+      if (!existsSync(fnDir)) {
+        bad(`API 路由 dest = ${JSON.stringify(dest)} 指向不存在的函数 `
+          + `"${name}"（没有 functions/${name}.func）—— 接口会全部 404。`
+          + "应写函数名本身，如 '/index'")
+      } else if (/\$\d/.test(dest)) {
+        bad(`API 路由 dest = ${JSON.stringify(dest)} 带了捕获组 —— Vercel 会据此改写路径，`
+          + "而 Hono 的路由挂在 /api/ 下，应直接写 '/index' 让原始路径透传")
+      } else {
+        ok(`API 路由 dest = ${dest}（命中函数 ${name}，原始路径透传给 Hono）`)
+      }
+    }
   } else if (!cfg.rewrites?.length) {
     bad('既无 vercel.json rewrites 也无 .vercel/output/config.json —— 刷新 /admin 等子路由会 404')
   } else {

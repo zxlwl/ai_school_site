@@ -190,6 +190,24 @@ if (!existsSync(vcConfig)) {
   } else {
     ok(`runtime ${vcc.runtime} 在当前支持期内`)
   }
+
+  /*
+   * ── useWebApi 必须为 true ─────────────────────────────────────
+   *
+   * launcherType=Nodejs 的默认签名是 (req, res) => void，返回值会被丢弃；
+   * 而 hono/vercel 的 handle(app) 返回的是 (req) => Response。
+   * 少了这个开关，运行时既不写响应也不结束请求，最终 300 秒超时：
+   *   WARN: default export returned a `Response`.
+   *   Vercel Runtime Timeout Error: Task timed out after 300 seconds
+   * 只有 useWebApi === true 时，@vercel/build-utils 的 getLambdaEnvironment()
+   * 才会注入 VERCEL_USE_WEB_API=1 让运行时按 Web fetch 语义调用。
+   */
+  if (vcc.useWebApi === true) {
+    ok('useWebApi = true（运行时按 Web fetch 语义调用，与 hono/vercel 匹配）')
+  } else {
+    bad(`.vc-config.json 的 useWebApi = ${JSON.stringify(vcc.useWebApi)}，应为 true —— `
+      + '否则返回值被丢弃，请求会卡到 300 秒超时')
+  }
 }
 
 /*

@@ -243,6 +243,21 @@ step(`  已复制 ${depCount} 个包（含手写的 @school/shared 运行时副�
  */
 const RUNTIME = 'nodejs24.x'
 
+/*
+ * ── useWebApi 是关键，漏了就 500 ────────────────────────────────
+ *
+ * NodejsLambda 的签名是 (req, res) => void，返回值会被直接丢弃。
+ * 而 hono/vercel 的 handle(app) 返回的是 Web `fetch` 风格函数 (req) => Response，
+ * 两者不匹配。只写 shouldAddHelpers 的话，Vercel 运行时会把我们的返回值扔掉，
+ * 请求既不写响应也不结束，最终卡到 300 秒超时：
+ *   WARN: default export returned a `Response`.
+ *   The default-export signature is `(req, res) => void` — returns are ignored.
+ *   Vercel Runtime Timeout Error: Task timed out after 300 seconds
+ *
+ * 打开开关后，getLambdaEnvironment()（@vercel/build-utils）才会注入
+ * VERCEL_USE_WEB_API=1，运行时改按 Web fetch 语义调用：
+ *   lambda.useWebApi === true && (environment.VERCEL_USE_WEB_API = "1")
+ */
 writeFileSync(
   join(funcDir, '.vc-config.json'),
   JSON.stringify(
@@ -251,6 +266,7 @@ writeFileSync(
       handler: 'index.mjs',
       launcherType: 'Nodejs',
       shouldAddHelpers: true,
+      useWebApi: true,
     },
     null,
     2,

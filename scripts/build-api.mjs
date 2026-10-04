@@ -276,9 +276,10 @@ writeFileSync(
 // ── 8. 写 config.json ───────────────────────────────────────────
 /*
  * 路由顺序至关重要：
- *   1. filesystem  —— 静态资源优先，否则前端 assets 会被函数抢走
- *   2. /api/(.*)   —— 所有接口交给函数
- *   3. /(.*)       —— 其余交给 SPA 兜底，否则刷新 /admin 等子路由会 404
+ *   1. /                       —— 根路径显式给前端（见下方说明）
+ *   2. filesystem              —— 静态资源优先，否则前端 assets 会被函数抢走
+ *   3. /api/(.*)               —— 所有接口交给函数
+ *   4. /(.*)                   —— 其余交给 SPA 兜底，否则刷新 /admin 等子路由会 404
  *
  * ── dest 必须写 '/index'，不是 '/api/index'（踩过的坑）──────────
  *
@@ -297,6 +298,17 @@ writeFileSync(
  * 用 dest: '/index' 时不带捕获组，Vercel 会把**原始路径原样**交给函数，
  * 所以函数收到的仍是 /api/health —— 这正是 Hono 注册路由时用的前缀
  * （前端 BASE = '/api' 也是同一约定）。
+ *
+ * ── 为什么第一条必须显式写 '/'（踩过的坑）───────────────────────
+ *
+ * 只有 { handle: 'filesystem' } + {'/api/(.*)'} + {'/(.*)'} 时，线上表现是：
+ *     /index.html      → HTML   （filesystem 命中静态文件 ✓）
+ *     /anything-else   → HTML   （SPA 兜底正常 ✓）
+ *     /                → 函数根路由 JSON  ✗ 唯独根路径跑进了函数
+ *
+ * 子路径都对、只有 '/' 出错，是因为根路径会先被拿去匹配函数；
+ * 在 filesystem 之前显式声明 '/' 就能把它钉死在前端。
+ * 注意 '/index.html' 由 filesystem 自动处理，不需要也不应该单独列规则。
  */
 writeFileSync(
   join(outDir, 'config.json'),
@@ -304,6 +316,7 @@ writeFileSync(
     {
       version: 3,
       routes: [
+        { src: '/', dest: '/index.html' },
         { handle: 'filesystem' },
         { src: '/api/(.*)', dest: '/index' },
         { src: '/(.*)', dest: '/index.html' },

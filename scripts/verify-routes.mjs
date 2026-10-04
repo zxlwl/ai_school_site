@@ -86,9 +86,33 @@ for (const p of ['/', '/admin', '/admin/articles', '/news/hello']) {
   console.log(`  ${okk ? '✓' : '✗'} ${p.padEnd(22)} → ${JSON.stringify(mapped)}`)
 }
 
+/*
+ * 根路径 '/' 必须显式命中一条 src:'/' 的规则。
+ *
+ * 只靠 filesystem + SPA 兜底时，'/' 在线上会被拿去匹配函数，
+ * 结果首页返回 API JSON（而 /anything-else 反而正常返 HTML）。
+ * 这里断言第一条规则就是显式的根路径规则。
+ */
+console.log('')
+console.log('根路径规则:')
+{
+  const first = cfg.routes[0]
+  const okk = first && first.src === '/' && first.dest === '/index.html'
+  if (!okk) fail++
+  console.log(
+    `  ${okk ? '✓' : '✗'} 首条规则 ${JSON.stringify(first)}` +
+      (okk ? '（显式钉死根路径）' : " 期望 {\"src\":\"/\",\"dest\":\"/index.html\"}"),
+  )
+  const idxFs = cfg.routes.findIndex((r) => r.handle === 'filesystem')
+  const idxRoot = cfg.routes.findIndex((r) => r.src === '/')
+  const ordered = idxRoot !== -1 && idxFs !== -1 && idxRoot < idxFs
+  if (!ordered) fail++
+  console.log(`  ${ordered ? '✓' : '✗'} 根路径规则排在 filesystem 之前`)
+}
+
 console.log('')
 if (fail) {
   console.log(`✗ ${fail} 条不符合预期`)
   process.exit(1)
 }
-console.log('✓ 路由语义符合预期（/api 前缀完整保留，前端走 SPA 兜底）')
+console.log('✓ 路由语义符合预期（/api 前缀完整保留，前端走 SPA 兜底，根路径钉死）')

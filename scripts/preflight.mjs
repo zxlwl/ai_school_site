@@ -27,126 +27,96 @@ const note = (m) => { console.log(`  \x1b[33m!\x1b[0m ${m}`); notes.push(m) }
 const section = (t) => console.log(`\n\x1b[1m${t}\x1b[0m`)
 
 /* ---------------------------------------------------------------- */
-section('1. Serverless 函数入口（预打包产物链）')
+section('1. Serverless 函数入口（Build Output API，仓库内无 api/ 目录）')
 
 /*
- * 本项目刻意把函数实现「预打包」成 api/_bundle.mjs，而不是让 Vercel 直接
- * 编译 api/index.ts 的 TS 依赖树。原因：Vercel 会用 moduleResolution=node16
- * 编译入口及其全部依赖，而 apps/api 源码使用无扩展名相对导入，会报 TS2835；
- * 该错误不中断部署（仍显示 Build Completed），但函数被静默跳过 → /api/* 全 404。
+ * ── 为什么仓库里**不能**有 api/ 目录 ───────────────────────────
  *
- * 产物为何不叫 index.mjs：Vercel CLI 会报
- *   Error: Two or more files have conflicting paths or names.
- *   The path "api/index.mjs" has conflicts with "api/index.ts".
- * 两者去掉扩展名后同名，被判为同一路径的两个函数，构建直接失败。
- * 故产物改名 _bundle.mjs（下划线前缀 = 非路由文件）。
+ * Vercel 会自动扫描仓库根的 `api/`，把其中的 .ts 当成函数入口，然后用自带
+ * TypeScript 转译它。这条链路对本项目是致命的：
  *
- * 因此这里必须检查三件套齐备，缺一不可：
- *   api/index.ts      → 薄壳入口（Vercel 唯一认的函数入口）
- *   api/_bundle.mjs   → 真正的实现（构建产物，但必须入库）
- *   api/_bundle.d.mts → 薄壳导入 .mjs 时的类型声明，缺了会 TS7016
+ *   1. 转译产物写进临时目录（@vercel/node: mkdtemp(join(tmpdir(),
+ *      "vercel-typescript-"))），且**只复制 .ts 文件**。
+ *   2. 入口若 import 任何非 .ts 的兄弟文件（例如预打包的 .mjs），该文件
+ *      不会被一起复制 → 运行时 ERR_MODULE_NOT_FOUND。
+ *   3. 编译参数带 noCheck: true，不产生类型错误输出 → 失败是**静默**的，
+ *      构建日志停在 "Using TypeScript x.y.z" 之后一片空白。
+ *
+ * 历史上因此踩过三次坑：TS2835 静默跳过、conflicting paths、以及薄壳引用
+ * _bundle.mjs 在临时目录中缺失。结论是只要 api/ 存在就躲不开。
+ *
+ * 现方案：仓库内没有 api/，函数完全由 scripts/build-api.mjs 产出到
+ * .vercel/output/functions/index.func/，Vercel 无东西可编译。
  */
-const entry = join(root, 'api', 'index.ts')
-const bundle = join(root, 'api', '_bundle.mjs')
-const bundleTypes = join(root, 'api', '_bundle.d.mts')
+const staleApi = join(root, 'api')
 
-// 命名冲突检查：api/ 下不能有两个「去掉扩展名后同名」的真函数文件。
-// 注意 *声明文件*（*.d.ts / *.d.mts / *.d.cts）不算函数候选，必须排除 ——
-// 否则 _bundle.mjs 与 _bundle.d.mts 会被误判为冲突。
-const apiDir = join(root, 'api')
-if (existsSync(apiDir)) {
-  const stems = {}
-  const candidates = []
-  for (const f of readdirSync(apiDir)) {
-    // 跳过声明文件与下划线前缀的非路由文件
-    if (/\.d\.(ts|mts|cts)$/i.test(f)) continue
-    if (f.startsWith('_')) continue
-    const m = f.match(/^(.+?)(\.[a-z]+)$/i)
-    if (!m) continue
-    candidates.push(f)
-    ;(stems[m[1]] ??= []).push(f)
-  }
-  const conflicts = Object.entries(stems).filter(([, files]) => files.length > 1)
-  for (const [, files] of conflicts) {
-    bad(`api/ 下函数入口命名冲突: ${files.join(' 与 ')} —— Vercel 会报 conflicting paths，构建直接失败`)
-  }
-  if (!conflicts.length) ok(`api/ 下无函数入口冲突（函数候选: ${candidates.join(', ') || '无'}）`)
+if (existsSync(staleApi)) {
+  bad('仓库根存在 api/ 目录 —— Vercel 会扫描并强行编译其中的 .ts，'
+    + '导致函数运行时解析不到同目录的 .mjs 而静默失败。请删除该目录。')
+} else {
+  ok('仓库根无 api/ 目录（Vercel 无从扫描，不会介入编译）')
 }
 
-if (!existsSync(entry)) {
-  bad('缺少根目录 api/index.ts —— Vercel 找不到任何函数')
+const outDir = join(root, '.vercel', 'output')
+const funcDir = join(outDir, 'functions', 'index.func')
+const funcEntry = join(funcDir, 'index.mjs')
+const vcConfig = join(funcDir, '.vc-config.json')
+
+if (!existsSync(funcEntry)) {
+  bad('缺少 .vercel/output/functions/index.func/index.mjs —— 请先运行 npm run build:api')
 } else {
-  ok('根目录 api/index.ts 存在（函数入口）')
+  const size = statSync(funcEntry).size
+  ok(`函数产物存在（${(size / 1024).toFixed(1)} KB）`)
 
-  if (!existsSync(bundle)) {
-    bad('缺少 api/_bundle.mjs —— 请先运行 npm run build:api')
+  // 产物必须是自包含的：有任何相对导入都会在 Serverless 运行时崩
+  const code = readFileSync(funcEntry, 'utf8')
+  const relImports = code.match(/^\s*(?:import|export)[^;]*?from\s*['"]\.\.?\//gm)
+  if (relImports) {
+    bad(`产物含 ${relImports.length} 处相对导入 —— Serverless 运行时无法解析，请重新 npm run build:api`)
   } else {
-    const size = statSync(bundle).size
-    ok(`api/_bundle.mjs 存在（${(size / 1024).toFixed(1)} KB，预打包的实现）`)
-
-    // 产物必须是自包含的：有任何相对导入都会在 Serverless 运行时崩
-    const code = readFileSync(bundle, 'utf8')
-    const relImports = code.match(/^\s*(?:import|export)[^;]*?from\s*['"]\.\.?\//gm)
-    if (relImports) {
-      bad(`产物含 ${relImports.length} 处相对导入 —— Serverless 运行时无法解析，请重新 npm run build:api`)
-    } else {
-      ok('产物自包含：无相对导入')
-    }
-
-    // @school/shared 以裸 TS 发布，必须已被内联进产物
-    if (/from\s*['"]@school\/shared['"]/.test(code)) {
-      bad('产物仍引用 @school/shared —— 该包发布裸 TS，函数加载即崩')
-    } else {
-      ok('产物已内联 @school/shared（无裸 TS 引用）')
-    }
-
-    // 中文曾被 PowerShell 往返读写破坏过，这里留一道防线
-    const fffd = [...code.matchAll(/\uFFFD/g)].length
-    if (fffd > 0) bad(`产物含 ${fffd} 个 U+FFFD 替换字符，中文已损坏，请重新 build:api`)
-    else ok('产物编码无损（U+FFFD: 0）')
-
-    // 默认导出必须是函数，否则调用时 500
-    if (/export\s*\{[^}]*\bdefault\b[^}]*\}/.test(code) || /export\s+default\b/.test(code)) {
-      ok('产物已导出 default 处理器')
-    } else {
-      bad('产物未导出 default 处理器')
-    }
+    ok('产物自包含：无相对导入')
   }
 
-  if (!existsSync(bundleTypes)) {
-    note('缺少 api/_bundle.d.mts —— 本地 tsc 可能报 TS7016（Vercel 通常不启用 strict 仍可构建）')
+  // @school/shared 以裸 TS 发布，必须已被内联进产物
+  if (/from\s*['"]@school\/shared['"]/.test(code)) {
+    bad('产物仍引用 @school/shared —— 该包发布裸 TS，函数加载即崩')
   } else {
-    ok('api/_bundle.d.mts 存在（.mjs 导入的类型声明）')
+    ok('产物已内联 @school/shared（无裸 TS 引用）')
   }
 
-  // 薄壳不应再直接引用后端源码，否则 Vercel 又会去编译整条 TS 依赖树
-  const src = readFileSync(entry, 'utf8')
-  const srcImports = [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g)].map((m) => m[1])
-  const leaksSource = srcImports.filter((s) => !/\.mjs$/.test(s))
-  if (leaksSource.length) {
-    bad(`api/index.ts 直接导入了源码 ${leaksSource.join(', ')} —— 会触发 Vercel 的 node16 编译（TS2835）`)
+  // 中文曾被 PowerShell 往返读写破坏过，这里留一道防线
+  const fffd = [...code.matchAll(/\uFFFD/g)].length
+  if (fffd > 0) bad(`产物含 ${fffd} 个 U+FFFD 替换字符，中文已损坏，请重新 build:api`)
+  else ok('产物编码无损（U+FFFD: 0）')
+
+  // 默认导出必须是函数，否则调用时 500
+  if (/export\s*\{[^}]*\bdefault\b[^}]*\}/.test(code) || /export\s+default\b/.test(code)) {
+    ok('产物已导出 default 处理器')
   } else {
-    ok(`api/index.ts 仅导入预打包产物（${srcImports.join(', ') || '无'}）`)
+    bad('产物未导出 default 处理器')
   }
+}
 
-  // 薄壳导入的目标必须真实存在，且必须是 _bundle.mjs（不能是 index.mjs，那会命名冲突）
-  const mjsImport = srcImports.find((s) => /\.mjs$/.test(s))
-  if (mjsImport === './index.mjs') {
-    bad('api/index.ts 导入了 ./index.mjs —— 与 index.ts 同名，Vercel 会报 conflicting paths')
-  } else if (mjsImport && existsSync(resolve(dirname(entry), mjsImport))) {
-    ok(`薄壳导入目标存在: ${mjsImport}`)
-  } else if (mjsImport) {
-    bad(`薄壳导入目标不存在: ${mjsImport}`)
-  }
+if (!existsSync(vcConfig)) {
+  bad('缺少 .vc-config.json —— Vercel 不知道如何运行该函数')
+} else {
+  const vc = JSON.parse(readFileSync(vcConfig, 'utf8'))
+  if (vc.launcherType !== 'Nodejs') bad(`launcherType 应为 Nodejs，实际 ${vc.launcherType}`)
+  else ok(`.vc-config.json: runtime=${vc.runtime} handler=${vc.handler} launcherType=Nodejs`)
+}
 
-  // 确认构建脚本会生成产物
-  const rootPkgEarly = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-  const buildEarly = rootPkgEarly.scripts?.build ?? ''
-  if (/build:api/.test(buildEarly)) {
-    ok(`根 build 脚本包含 build:api：${buildEarly}`)
-  } else {
-    bad(`根 build 脚本未包含 build:api（当前：${buildEarly}）—— Vercel 不会生成函数产物`)
-  }
+// 确认构建脚本会生成产物
+const rootPkgEarly = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const buildEarly = rootPkgEarly.scripts?.build ?? ''
+if (/build:api/.test(buildEarly)) {
+  ok(`根 build 脚本包含 build:api：${buildEarly}`)
+} else {
+  bad(`根 build 脚本未包含 build:api（当前：${buildEarly}）—— Vercel 不会生成函数产物`)
+}
+if (/&&/.test(buildEarly) && buildEarly.indexOf('build:api') > buildEarly.indexOf('@school/web')) {
+  ok('build:api 排在 web build 之后（能读到 apps/web/dist 填充 static/）')
+} else if (/build:api/.test(buildEarly)) {
+  bad('build:api 未排在 web build 之后 —— static/ 会拿不到前端产物，站点空白')
 }
 
 /* ---------------------------------------------------------------- */
@@ -215,28 +185,13 @@ if (!existsSync(vc)) {
     ok('构建命令使用 npm，与 Vercel 默认环境一致')
   }
 
-  // 函数入口 path 必须在仓库内存在
-  for (const p of Object.keys(cfg.functions ?? {})) {
-    if (existsSync(join(root, p))) ok(`functions 入口存在: ${p}`)
-    else bad(`functions 指向不存在的入口: ${p}`)
-  }
-
-  // 入口必须是 .ts —— Vercel 会忽略 api/ 下的 .mjs/.mts 作为函数入口
+  // Build Output API 模式下不应再有 functions 字段 —— 函数由 .vercel/output 声明。
+  // 保留该字段会让 Vercel 重新去扫描并编译 api/ 目录（而该目录已删除）。
   const fnKeys = Object.keys(cfg.functions ?? {})
-  if (fnKeys.some((k) => /\.mjs$|\.mts$/.test(k))) {
-    bad('functions 入口用了 .mjs/.mts —— Vercel 会忽略这些扩展名，函数不会被注册')
-  } else if (fnKeys.length) {
-    ok(`函数入口扩展名为 Vercel 可识别类型（${fnKeys.join(', ')}）`)
-  }
-
-  // includeFiles 确保预打包产物随函数一起上传（.mjs 被忽略但仍是运行时依赖）
-  const inc = fnKeys.map((k) => cfg.functions[k]?.includeFiles).filter(Boolean)
-  if (inc.some((v) => String(v).includes('_bundle.mjs'))) {
-    ok('includeFiles 已声明 api/_bundle.mjs —— 产物会随函数上传')
-  } else if (inc.some((v) => String(v).includes('index.mjs'))) {
-    bad('includeFiles 指向 api/index.mjs —— 该文件已改名 _bundle.mjs，会有命名冲突')
-  } else if (fnKeys.length) {
-    note('未声明 includeFiles: api/_bundle.mjs —— 若函数运行时找不到该文件请补上')
+  if (fnKeys.length) {
+    bad(`vercel.json 仍声明 functions（${fnKeys.join(', ')}）—— Build Output API 模式下会让 Vercel 重新扫描 api/，请移除`)
+  } else {
+    ok('vercel.json 未声明 functions（函数由 .vercel/output 声明）')
   }
 
   /*

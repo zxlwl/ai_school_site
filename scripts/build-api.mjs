@@ -1,35 +1,35 @@
 #!/usr/bin/env node
 /**
- * 把后端 API 预打包成单文件 JS，供 Vercel Serverless 使用。
+ * 把后端 API 打包成 Vercel Serverless 函数（Build Output API 形态）。
  *
- * ── 为什么需要这一步 ────────────────────────────────────────────
- * Vercel 一旦发现 api/index.ts，就会用自带的 TypeScript 环境按
- * moduleResolution=node16 编译这个入口**及其整条依赖树**。而本项目
- * apps/api 源码使用无扩展名相对导入（如 '../lib/utils'），在 node16 下
- * 会报：
- *     TS2835: Relative import paths need explicit file extensions in
- *             ECMAScript imports when '--moduleResolution' is 'node16'
- * 该错误**不会中断部署**（日志仍显示 "Build Completed" + "Deployment
- * completed"），但函数打包被静默跳过，结果是 /api/* 全部 404 —— 极难排查。
+ * ── 为什么要自己打包，而不是让 Vercel 编译 api/ 目录 ──────────────
+ * Vercel 会自动扫描仓库根目录的 `api/` 并把其中的 .ts 文件当作函数入口，
+ * 然后用自带的 TypeScript 环境转译它。这条链路对本项目是**致命**的：
  *
- * 因此我们主动用 esbuild 把整个后端打成一个自包含的 .mjs：零相对导入、
- * 零 require，只引用 npm 包名。Vercel 面对的是纯 JS，不再触发它自己的
- * TS 编译链路。
+ *   1. 转译产物被写进临时目录（@vercel/node 里的
+ *      mkdtemp(join(tmpdir(), "vercel-typescript-"))），只复制 .ts 文件。
+ *   2. 若入口 import 了任何非 .ts 的同目录文件（例如预打包好的 .mjs），
+ *      该文件**不会**被一起复制过去。
+ *   3. 运行时解析该 import 直接 ERR_MODULE_NOT_FOUND。
+ *   4. 且编译时传了 noCheck: true，不产生类型错误输出 —— 失败是**静默**的：
+ *      构建日志停在 "Using TypeScript x.y.z (local user-provided)" 后一片空白。
  *
- * ── 产物与入口的协作方式 ───────────────────────────────────────
- *   真实实现 → api/_bundle.mjs  （本脚本生成，已提交入库）
- *   函数入口 → api/index.ts     （薄壳，只 re-export 上面这个产物）
+ * 换句话说：只要仓库里存在 `api/` 目录，Vercel 就会介入编译，无论入口写成
+ * 什么样都躲不开。任何"薄壳 + 预打包"的组合都会踩到第 2 步。
  *
- * ⚠ 产物为何不叫 index.mjs？
- *   Vercel CLI 会报「Two or more files have conflicting paths or names」——
- *   api/index.mjs 与 api/index.ts 去掉扩展名后同名，被判为同一路径的两个
- *   函数，构建直接失败（实测 CLI 62.1.0）。因此产物必须换名。
- *   选 _bundle.mjs 而非 bundle.mjs：下划线前缀是 Vercel 约定的「非路由文件」
- *   标记，能确保它不被当成第二个函数入口。
+ * ── 本方案 ─────────────────────────────────────────────────────
+ * 仓库里**不放 `api/` 目录**。函数完全由本脚本产出到 Vercel 官方推荐的
+ * Build Output API 目录结构中：
  *
- * 为什么入口不直接 import 后端源码？因为那样 Vercel 又会去编译整条 TS
- * 依赖树，绕回原问题。薄壳方案下，Vercel 编译 api/index.ts 时只看到一个
- * 指向 .mjs 的导入，配合 _bundle.d.mts 类型声明即可零报错通过。
+ *   .vercel/output/
+ *   ├── config.json                        顶层路由
+ *   ├── functions/index.func/
+ *   │   ├── .vc-config.json                运行时配置
+ *   │   └── index.mjs                      函数实现（esbuild 打包产物）
+ *   └── static/                            前端产物（必须显式复制）
+ *
+ * Vercel 没有 `api/` 可扫描，就完全没有机会介入编译；它只按 config.json
+ * 分发请求。这是目前唯一稳定可控的形态。
  *
  * ── 修改后端代码后 ─────────────────────────────────────────────
  *   npm run build:api
@@ -42,26 +42,37 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const outfile = join(root, 'api', '_bundle.mjs')
 const realApp = join(root, 'apps', 'api', 'src', 'app.ts')
+
+/** 产物直接落在这里，不经过任何中间目录，也不写入 api/ */
+const outDir = join(root, '.vercel', 'output')
+const funcDir = join(outDir, 'functions', 'index.func')
+const funcEntry = join(funcDir, 'index.mjs')
 
 if (!existsSync(realApp)) {
   console.error(`✗ 找不到后端应用: ${realApp}`)
   process.exit(1)
 }
 
-// 清理旧产物，避免用陈旧的 bundle 部署
-rmSync(outfile, { force: true })
+/*
+ * 仓库里若残留 api/ 目录会重新触发 Vercel 的编译链路（见文件头说明），
+ * 因此这里主动拦截而不是静默通过 —— 这是个必须让人知道的约束。
+ */
+const staleApiDir = join(root, 'api')
+if (existsSync(staleApiDir)) {
+  console.error('✗ 仓库根目录存在 api/ 目录')
+  console.error('  Vercel 会自动扫描它并强行编译其中的 .ts，导致函数在运行时')
+  console.error('  解析不到同目录的 .mjs 而静默失败。请删除该目录：')
+  console.error(`      rm -rf ${staleApiDir}`)
+  process.exit(1)
+}
 
 /*
- * 虚拟入口：直接交给 esbuild 一段源码，而不是让磁盘上的 api/index.ts
- * 充当入口。
+ * 虚拟入口：直接交给 esbuild 一段源码，而不是读磁盘上的某个入口文件。
  *
- * 这样做是为了彻底消除"自引用"：薄壳 api/index.ts 里写着
- * `import handler from './index.mjs'`，若拿它当打包入口，esbuild 就会去
- * 解析这个指向「正在生成的产物」的导入 —— 而它刚被删掉，必然报
- *     Could not resolve "./index.mjs"
- * 用 stdin 喂一段干净的入口源码，语义清晰且没有任何循环。
+ * 这样做有两个好处：
+ *   1. 不需要仓库里有 api/index.ts（那正是要消灭的东西）；
+ *   2. 语义清晰 —— 入口内容一目了然，且不存在任何自引用风险。
  */
 const virtualEntry = `
 import { handle } from 'hono/vercel'
@@ -91,14 +102,18 @@ const EXTERNAL = [
 ]
 
 try {
+  // 整体重建，避免陈旧产物混入新部署
+  rmSync(outDir, { recursive: true, force: true })
+  mkdirSync(funcDir, { recursive: true })
+
   const result = await build({
     stdin: {
       contents: virtualEntry,
-      resolveDir: join(root, 'api'),
+      resolveDir: root,
       sourcefile: 'vercel-entry.ts',
       loader: 'ts',
     },
-    outfile,
+    outfile: funcEntry,
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -112,13 +127,13 @@ try {
     metafile: true,
   })
 
-  const size = statSync(outfile).size
+  const size = statSync(funcEntry).size
   const inputs = Object.keys(result.metafile.inputs)
   const bundled = inputs.filter((p) => !p.includes('node_modules') && p !== 'vercel-entry.ts')
-  console.log(`✓ 后端函数已打包: api/_bundle.mjs (${(size / 1024).toFixed(1)} KB)`)
+  console.log(`✓ 后端函数已打包 (${(size / 1024).toFixed(1)} KB)`)
   console.log(`  内联源文件 ${bundled.length} 个，外部依赖 ${EXTERNAL.length} 个`)
 
-  const code = readFileSync(outfile, 'utf8')
+  const code = readFileSync(funcEntry, 'utf8')
 
   // 安全检查 1：不能残留 @school/shared 裸引用（它以裸 TS 发布，运行时解析不了）
   const bare = code.match(/from\s*['"]@school\/shared['"]/g)
@@ -152,39 +167,11 @@ try {
   console.log('  ✓ 编码无损（U+FFFD: 0）')
 
   /*
-   * ── 生成 Vercel Build Output API 产物 ──────────────────────────
-   *
-   * 为什么需要这一步（本项目踩过的最大坑）：
-   *   vercel.json 里同时存在 buildCommand + outputDirectory + framework:null
-   *   时，Vercel 会把项目当作「纯静态站点」：跑完 buildCommand、把
-   *   outputDirectory 整体上传，**完全跳过 api/ 目录的函数发现**。
-   *   表现为：构建 Ready、页面正常，但构建日志里「0 个函数」，
-   *   /api/* 全部 404。
-   *
-   *   解法是改用 Build Output API：由我们自己产出 .vercel/output/ 目录，
-   *   在其中显式声明函数，Vercel 只需照单执行，不再依赖自动发现。
-   *
-   * 目录约定（Vercel Build Output API v3）：
-   *   .vercel/output/config.json                  顶层路由配置
-   *   .vercel/output/functions/<name>.func/       每个函数一个目录
-   *     ├── .vc-config.json                       函数运行时配置
-   *     └── index.mjs                             函数实现
-   */
-  const outDir = join(root, '.vercel', 'output')
-  const funcDir = join(outDir, 'functions', 'index.func')
-
-  rmSync(outDir, { recursive: true, force: true })
-  mkdirSync(funcDir, { recursive: true })
-
-  // 函数实现：直接复用已打包好的产物
-  copyFileSync(outfile, join(funcDir, 'index.mjs'))
-
-  /*
    * .vc-config.json 告知 Vercel 如何运行这个函数。
-   *   runtime: nodejs —— 走 Node 运行时（非 Edge）
+   *   runtime: nodejs20.x —— 走 Node 运行时（非 Edge）
    *   handler: index.mjs —— 入口文件名（相对函数目录）
    *   launcherType: Nodejs —— 用 Node 启动器，它会把默认导出当作
-   *     (req, res) 或 Web Request handler 调用
+   *     Web Request handler 调用
    */
   writeFileSync(
     join(funcDir, '.vc-config.json'),
@@ -203,8 +190,11 @@ try {
   /*
    * 顶层 config.json：声明路由。
    *
-   * 关键点是 filesystem 处理器必须排在函数之前，否则 Vercel 会把
-   * 所有请求都丢给函数。顺序：静态文件 → 函数 → 其余交给前端 SPA。
+   * 顺序至关重要：
+   *   1. filesystem  —— 静态资源优先，否则前端 assets 会被函数抢走
+   *   2. /api/(.*)   —— 所有接口交给函数
+   *   3. /(.*)       —— 其余交给 SPA 兜底，否则刷新 /admin 等子路由会 404
+   * 若把第 3 条排在前面，接口会被 SPA 吞掉并永远返回 HTML。
    */
   writeFileSync(
     join(outDir, 'config.json'),
@@ -212,11 +202,8 @@ try {
       {
         version: 3,
         routes: [
-          // 1. 静态资源优先（前端 dist 里的 assets、favicon 等）
           { handle: 'filesystem' },
-          // 2. 所有 /api/* 交给函数
           { src: '/api/(.*)', dest: '/api/index' },
-          // 3. 其余路径交给前端（SPA 路由，直接改写而不是重定向）
           { src: '/(.*)', dest: '/index.html' },
         ],
       },
@@ -226,16 +213,16 @@ try {
   )
 
   console.log(`  ✓ 已生成 Build Output API 产物: .vercel/output/`)
-  console.log(`    functions/index.func/  （函数，${(statSync(join(funcDir, 'index.mjs')).size / 1024).toFixed(1)} KB）`)
+  console.log(`    functions/index.func/  （函数，${(size / 1024).toFixed(1)} KB）`)
   console.log(`    config.json            （路由：静态 → /api/* → SPA 兜底）`)
 
   /*
    * ── 复制前端静态文件 ──────────────────────────────────────────
    *
-   * 致命细节：切换到 Build Output API 后，vercel.json 里已没有
-   * outputDirectory，前端产物**不会**被自动带上。而 config.json 的第一条
-   * 路由是 { handle: 'filesystem' }，它只会去 .vercel/output/static/ 找文件。
-   * 若不复制，结果是：函数能跑、但整个站点空白（连 index.html 都没有）。
+   * 致命细节：Build Output API 模式下，前端产物**不会**被自动带上。
+   * 而 config.json 的第一条路由是 { handle: 'filesystem' }，它只会去
+   * .vercel/output/static/ 找文件。若不复制，结果是：函数能跑、但整个
+   * 站点空白（连 index.html 都没有）。
    *
    * 因此这里必须把 apps/web/dist 完整搬进 static/。
    */

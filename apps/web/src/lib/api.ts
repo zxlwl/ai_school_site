@@ -130,6 +130,14 @@ import type {
   UserLoginRequest,
   UserProfile,
   UserSessionInfo,
+  ForumBoard,
+  ForumBoardInput,
+  ForumPost,
+  ForumPostPolicy,
+  ForumTopic,
+  ForumTopicInput,
+  ForumTopicStatus,
+  ForumTopicSummary,
 } from '@school/shared'
 
 function toQuery(params: Record<string, unknown> | undefined): string {
@@ -301,4 +309,95 @@ export const adminApi = {
   updateMessage: (id: number, payload: { isHandled?: boolean }) =>
     api.put<{ ok: true }>(`/admin/messages/${id}`, payload),
   deleteMessage: (id: number) => api.delete<{ ok: true }>(`/admin/messages/${id}`),
+}
+
+/* ---------------------------- 论坛（前台） -------------------------- */
+
+export const forumApi = {
+  boards: () => api.get<{ boards: ForumBoard[] }>('/forum/boards'),
+
+  topics: (boardSlug: string, query?: { page?: number; pageSize?: number; sort?: string }) =>
+    api.get<{
+      board: ForumBoard
+      topics: ForumTopicSummary[]
+      pagination: { page: number; pageSize: number; total: number }
+    }>(`/forum/boards/${boardSlug}/topics${toQuery(query)}`),
+
+  topic: (slug: string, query?: { page?: number; pageSize?: number }) =>
+    api.get<{
+      topic: ForumTopic
+      board: ForumBoard
+      posts: ForumPost[]
+      pagination: { page: number; pageSize: number; total: number }
+    }>(`/forum/topics/${slug}${toQuery(query)}`),
+
+  recent: (limit = 6) =>
+    api.get<{ topics: ForumTopicSummary[] }>(`/forum/recent${toQuery({ limit })}`),
+
+  createTopic: (payload: ForumTopicInput) =>
+    api.post<{ topic: ForumTopic; pending: boolean }>('/forum/topics', payload),
+
+  updateTopic: (id: number, payload: { title?: string; content?: string }) =>
+    api.patch<{ topic: ForumTopic }>(`/forum/topics/${id}`, payload),
+
+  deleteTopic: (id: number) => api.delete<{ ok: true }>(`/forum/topics/${id}`),
+
+  reply: (topicId: number, payload: { content: string; replyTo?: number | null }) =>
+    api.post<{ post: ForumPost }>(`/forum/topics/${topicId}/replies`, payload),
+
+  deletePost: (id: number) => api.delete<{ ok: true }>(`/forum/posts/${id}`),
+}
+
+/* ---------------------------- 论坛（后台） -------------------------- */
+
+export interface AdminForumTopicRow {
+  id: number
+  boardId: number
+  title: string
+  slug: string
+  status: ForumTopicStatus
+  pinned: boolean
+  locked: boolean
+  views: number
+  replyCount: number
+  createdAt: string
+  author: { id: number; username: string; displayName: string }
+  board: { id: number; name: string; slug: string }
+}
+
+export const adminForumApi = {
+  boards: () => api.get<{ boards: ForumBoard[] }>('/admin/forum/boards'),
+
+  createBoard: (payload: ForumBoardInput) =>
+    api.post<{ board: ForumBoard }>('/admin/forum/boards', payload),
+
+  updateBoard: (id: number, payload: Partial<ForumBoardInput>) =>
+    api.put<{ board: ForumBoard }>(`/admin/forum/boards/${id}`, payload),
+
+  deleteBoard: (id: number) => api.delete<{ ok: true }>(`/admin/forum/boards/${id}`),
+
+  topics: (query?: { page?: number; pageSize?: number; status?: string; boardId?: number }) =>
+    api.get<{ topics: AdminForumTopicRow[]; pagination: { page: number; pageSize: number; total: number } }>(
+      `/admin/forum/topics${toQuery(query)}`,
+    ),
+
+  moderateTopic: (
+    id: number,
+    payload: { pinned?: boolean; locked?: boolean; status?: ForumTopicStatus; boardId?: number },
+  ) => api.patch<{ topic: { id: number } }>(`/admin/forum/topics/${id}`, payload),
+
+  posts: (topicId: number) =>
+    api.get<{
+      posts: Array<{
+        id: number
+        content: string
+        status: string
+        replyTo: number | null
+        createdAt: string
+        author: { id: number; username: string; displayName: string }
+      }>
+    }>(`/admin/forum/topics/${topicId}/posts`),
+
+  moderatePost: (id: number, status: 'published' | 'hidden' | 'deleted') =>
+    api.patch<{ ok: true }>(`/admin/forum/posts/${id}`, { status }),
 }

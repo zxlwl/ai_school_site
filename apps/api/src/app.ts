@@ -9,8 +9,10 @@ import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { adminRoutes } from './routes/admin'
 import { adminAccountRoutes } from './routes/admin-accounts'
+import { adminForumRoutes } from './routes/admin-forum'
 import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
+import { forumRoutes } from './routes/forum'
 import { publicRoutes } from './routes/public'
 import { uploadRoutes } from './routes/upload'
 import { fail } from './lib/utils'
@@ -159,10 +161,16 @@ export function createApp() {
    */
   app.route('/api/admin/accounts', adminAccountRoutes)
 
+  /* 论坛管理同理：必须在 adminRoutes 之前，才能先做角色判定 */
+  app.route('/api/admin/forum', adminForumRoutes)
+
   app.route('/api/admin', adminRoutes)
 
   /* 会员（前台）账号 */
   app.route('/api/account', accountRoutes)
+
+  /* 论坛（公开读 + 会员写） */
+  app.route('/api/forum', forumRoutes)
 
   app.route('/api/upload', uploadRoutes)
 

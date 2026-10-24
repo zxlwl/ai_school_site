@@ -1,6 +1,7 @@
 # 论坛实现方案
 
-> 本文是**设计文档**，不含实现代码。目的是把决策和取舍讲清楚，让后续实现不必重新纠结。
+> **状态：已实现基础功能。** 本文最初是设计文档，实现完成后已按实际情况校订；
+> 文末列出「已实现」与「未实现」的差异，阅读时请以该清单为准。
 >
 > 前置条件：账号系统已实现（`users` 表 + `school_user` Cookie + 角色/状态字段），
 > 论坛直接复用它，不引入第二套用户体系。
@@ -259,12 +260,12 @@ create index forum_topics_search_idx on forum_topics using gin (search_vector);
 
 ## 六、实施顺序（建议分四批）
 
-| 批次 | 内容 | 产出 |
-|---|---|---|
-| 1 | 表结构 + 版块/主题/回复的读写接口 + 基础页面 | 能发帖、能看帖 |
-| 2 | 管理端：版块管理、置顶/锁定/隐藏 | 能管内容 |
-| 3 | 举报 + 禁言 + 频率限制 | 能管人 |
-| 4 | 全文搜索 + 楼中楼 + 通知 | 体验完善 |
+| 批次 | 内容 | 产出 | 状态 |
+|---|---|---|---|
+| 1 | 表结构 + 版块/主题/回复的读写接口 + 基础页面 | 能发帖、能看帖 | ✅ 已完成 |
+| 2 | 管理端：版块管理、置顶/锁定/隐藏 | 能管内容 | ✅ 已完成 |
+| 3 | 举报 + 禁言 + 频率限制 | 能管人 | ⚠ 部分（禁言/频率限制已完成，举报未做） |
+| 4 | 全文搜索 + 楼中楼 + 通知 | 体验完善 | ❌ 未做 |
 
 **每批都能独立上线**，不要一次性憋大版本。
 
@@ -283,14 +284,59 @@ create index forum_topics_search_idx on forum_topics using gin (search_vector);
 
 ---
 
-## 八、如果要真的开始做
+## 八、实现现状（与上述设计的差异）
 
-第一步只需确认三件事：
+**已实现：**
 
-1. 版块怎么分？（建议 3-4 个：校园话题、学习交流、社团活动、意见建议）
-2. 是否需要先审后发？（建议默认不需要）
-3. 谁能发主题？（建议所有 active 会员）
+| 模块 | 文件 | 说明 |
+|---|---|---|
+| 数据表 | `apps/api/src/db/schema.ts` | `forum_boards` / `forum_topics` / `forum_posts` 三张表（举报表未建） |
+| 公开接口 | `apps/api/src/routes/forum.ts` | `GET /boards`、`GET /boards/:slug/topics`、`GET /topics/:slug`、`GET /recent` |
+| 会员接口 | 同上 | `POST /topics`、`PATCH /topics/:id`、`DELETE /topics/:id`、`POST /topics/:id/replies`、`DELETE /posts/:id` |
+| 管理接口 | `apps/api/src/routes/admin-forum.ts` | 版块增删改、主题置顶/锁定/隐藏、帖子隐藏 |
+| 前端页面 | `apps/web/src/pages/forum/` | `ForumHomePage` / `BoardPage` / `TopicPage` / `NewTopicPage` |
+| 管理后台 | `apps/web/src/pages/admin/AdminForum.tsx` | 版块与主题管理 |
+| 演示数据 | `scripts/seed-forum-demo.mjs` | 4 个版块 + 6 个主题 + 9 条回复（幂等） |
 
-确认后按第六节的批次 1 开始，约 6 个文件：`schema.ts` 追加 4 张表、
-`routes/forum.ts`、`routes/admin-forum.ts`、`middleware/auth.ts` 加 `requireUser` 读写区分、
-前端 `ForumHomePage` / `BoardPage` / `TopicPage`。
+**与设计不一致的地方（实现时按实际调整）：**
+
+1. **`forum_boards` 没有 `topic_count` / `post_count` 冗余列** —— 版块列表用一次聚合查询算出
+   `topicCount` 和 `lastActivityAt`，避免维护冗余计数的写放大。设计文档里的 4.4 节对此做了
+   相反的取舍（主题的 `reply_count` 仍保留冗余），因为版块数量少、主题列表才是热查询。
+2. **`forum_topics.content` 存首楼正文** —— 详情页无需 join `forum_posts` 拿首楼。
+   `forum_posts` 只存回复，因此没有 `floor` 列。
+3. **`forum_topics` 有 `slug`** —— 详情页用 `/forum/t/:slug` 而不是 `/forum/t/:id`，
+   slug 由标题生成（中文标题会保留中文字符，URL 中显示为百分号编码但地址栏可读）。
+4. **频率限制用数据库计数** —— 符合设计文档 4.1 的结论；serverless 下内存计数无效。
+5. **待审核（`needsReview`）已实现** —— 版块可开启，开启后新主题 `status='pending'`。
+
+**未实现（设计里有、代码里没有）：**
+
+- `forum_reports` 举报功能（表也没建）
+- 全文搜索（`/api/forum/search`）
+- 楼中楼（`reply_to` 字段存在但未使用）
+- 站内通知
+
+---
+
+## 九、本地试用
+
+```bash
+# 灌入演示版块与主题（幂等，可重复执行）
+node scripts/seed-forum-demo.mjs
+
+# 演示会员账号
+# 用户名：demo_student    密码：demo12345
+```
+
+启动后访问 `/forum` 即可看到版块列表；登录后可发帖、回复。
+
+---
+
+## 十、如果要继续做
+
+下一步优先级建议：
+
+1. **举报功能** —— 校园场景的刚需，实现成本低（一张表 + 两个接口），能显著降低管理员的被动巡查压力
+2. **全文搜索** —— 注意中文必须用 `to_tsvector('simple', ...)`，用 `'english'` 会把整段中文当成一个 token
+3. 楼中楼 —— `reply_to` 已留好，只需前端展示与接口回填

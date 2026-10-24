@@ -189,6 +189,58 @@ const STATEMENTS = [
   `create unique index if not exists users_email_idx on users (email)`,
   `create index if not exists users_status_idx on users (status)`,
 
+  /* 论坛：版块 ---------------------------------------------------- */
+  `create table if not exists forum_boards (
+     id serial primary key,
+     name varchar(60) not null,
+     slug varchar(80) not null,
+     description text,
+     color varchar(16),
+     sort_order integer not null default 0,
+     post_policy varchar(16) not null default 'member_only',
+     needs_review boolean not null default false,
+     archived boolean not null default false,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   )`,
+  `create unique index if not exists forum_boards_slug_idx on forum_boards (slug)`,
+
+  /* 论坛：主题帖 -------------------------------------------------- */
+  `create table if not exists forum_topics (
+     id serial primary key,
+     board_id integer not null references forum_boards(id) on delete cascade,
+     author_id integer not null references users(id) on delete cascade,
+     title varchar(200) not null,
+     slug varchar(220) not null,
+     content text not null,
+     status varchar(16) not null default 'published',
+     pinned boolean not null default false,
+     locked boolean not null default false,
+     views integer not null default 0,
+     reply_count integer not null default 0,
+     last_reply_at timestamptz,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   )`,
+  `create unique index if not exists forum_topics_slug_idx on forum_topics (slug)`,
+  `create index if not exists forum_topics_board_idx on forum_topics (board_id, status, last_reply_at)`,
+  `create index if not exists forum_topics_author_idx on forum_topics (author_id)`,
+  `create index if not exists forum_topics_status_idx on forum_topics (status)`,
+
+  /* 论坛：回复 ---------------------------------------------------- */
+  `create table if not exists forum_posts (
+     id serial primary key,
+     topic_id integer not null references forum_topics(id) on delete cascade,
+     author_id integer not null references users(id) on delete cascade,
+     content text not null,
+     status varchar(16) not null default 'published',
+     reply_to integer,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   )`,
+  `create index if not exists forum_posts_topic_idx on forum_posts (topic_id, status, created_at)`,
+  `create index if not exists forum_posts_author_idx on forum_posts (author_id)`,
+
   /* 老库升级：以下语句在表已存在时补齐新增列（重复执行安全） ------- */
   `alter table pages add column if not exists summary text`,
   `alter table messages add column if not exists updated_at timestamptz not null default now()`,

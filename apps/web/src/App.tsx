@@ -26,6 +26,10 @@ import { ContactPage } from './pages/ContactPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { AccountPage } from './pages/AccountPage'
+import { ForumHomePage } from './pages/forum/ForumHomePage'
+import { BoardPage } from './pages/forum/BoardPage'
+import { TopicPage } from './pages/forum/TopicPage'
+import { NewTopicPage } from './pages/forum/NewTopicPage'
 
 // 后台按需加载：访客浏览前台时不必下载整个管理端代码
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'))
@@ -40,6 +44,9 @@ const AdminMessages = lazy(() => import('./pages/admin/AdminMessages'))
 const AdminAppearance = lazy(() => import('./pages/admin/AdminAppearance'))
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'))
 const AdminAccounts = lazy(() => import('./pages/admin/AdminAccounts'))
+const AdminForum = lazy(() =>
+  import('./pages/admin/AdminForum').then((m) => ({ default: m.AdminForum })),
+)
 
 export default function App() {
   return (
@@ -58,6 +65,11 @@ export default function App() {
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/account" element={<AccountPage />} />
+            {/* 论坛：固定路由必须排在 /:slug 兜底之前 */}
+            <Route path="/forum" element={<ForumHomePage />} />
+            <Route path="/forum/new" element={<NewTopicPage />} />
+            <Route path="/forum/b/:slug" element={<BoardPage />} />
+            <Route path="/forum/t/:slug" element={<TopicPage />} />
             {/* 通用单页兜底：必须放在所有固定路由之后 */}
             <Route path="/:slug" element={<SinglePage />} />
             <Route path="*" element={<NotFoundPage />} />
@@ -77,6 +89,7 @@ export default function App() {
             <Route path="appearance" element={<AdminAppearance />} />
             <Route path="settings" element={<AdminSettings />} />
             <Route path="accounts" element={<AdminAccounts />} />
+            <Route path="forum" element={<AdminForum />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Route>
         </Routes>

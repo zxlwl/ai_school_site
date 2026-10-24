@@ -18,6 +18,7 @@ import {
   Megaphone,
   Menu,
   MessageSquare,
+  MessagesSquare,
   Palette,
   Settings as SettingsIcon,
   ShieldAlert,
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
   { to: '/admin/announcements', label: '公告管理', icon: Megaphone },
   { to: '/admin/pages', label: '单页管理', icon: ImageIcon },
   { to: '/admin/messages', label: '访客留言', icon: MessageSquare },
+  { to: '/admin/forum', label: '论坛管理', icon: MessagesSquare },
   { to: '/admin/appearance', label: '外观主题', icon: Palette },
   { to: '/admin/settings', label: '系统设置', icon: SettingsIcon },
   // 仅超级管理员可见。注意：隐藏只是体验，真正的拦截在服务端。

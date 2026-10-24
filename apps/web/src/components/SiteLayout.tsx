@@ -132,6 +132,7 @@ export function SiteLayout() {
             </NavItem>
             <NavItem to="/articles">全部文章</NavItem>
             <NavItem to="/announcements">通知公告</NavItem>
+            <NavItem to="/forum">校园论坛</NavItem>
             {categories.slice(0, 3).map((category) => (
               <NavItem key={category.id} to={`/category/${category.slug}`}>
                 {category.name}
@@ -194,6 +195,7 @@ export function SiteLayout() {
               </MobileNavItem>
               <MobileNavItem to="/articles">全部文章</MobileNavItem>
               <MobileNavItem to="/announcements">通知公告</MobileNavItem>
+              <MobileNavItem to="/forum">校园论坛</MobileNavItem>
               {categories.map((category) => (
                 <MobileNavItem key={category.id} to={`/category/${category.slug}`}>
                   {category.name}

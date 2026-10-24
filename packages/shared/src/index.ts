@@ -454,6 +454,124 @@ export interface UpdateProfileInput {
 }
 
 /* ------------------------------------------------------------------ */
+/* 论坛                                                                */
+/* ------------------------------------------------------------------ */
+
+/** 发主题权限：所有会员 / 仅非禁言会员 / 仅管理员 */
+export type ForumPostPolicy = 'all' | 'member_only' | 'staff_only'
+
+export const FORUM_POST_POLICIES: ForumPostPolicy[] = ['all', 'member_only', 'staff_only']
+
+export const FORUM_POST_POLICY_LABEL: Record<ForumPostPolicy, string> = {
+  all: '所有会员',
+  member_only: '注册会员',
+  staff_only: '仅管理员',
+}
+
+/** 主题状态。pending 只在版块开启审核时出现 */
+export type ForumTopicStatus = 'published' | 'pending' | 'hidden' | 'deleted'
+
+/** 回复状态 */
+export type ForumPostStatus = 'published' | 'hidden' | 'deleted'
+
+/** 版块 */
+export interface ForumBoard {
+  id: number
+  name: string
+  slug: string
+  description: string | null
+  color: string | null
+  sortOrder: number
+  postPolicy: ForumPostPolicy
+  needsReview: boolean
+  archived: boolean
+  createdAt: string
+  updatedAt: string
+  /** 列表页聚合：版块内已发布主题数 */
+  topicCount?: number
+  /** 列表页聚合：版块内最新回复时间 */
+  lastActivityAt?: string | null
+}
+
+export interface ForumBoardInput {
+  name: string
+  /** 留空则由名称自动生成 */
+  slug?: string
+  description?: string | null
+  color?: string | null
+  sortOrder?: number
+  postPolicy?: ForumPostPolicy
+  needsReview?: boolean
+  archived?: boolean
+}
+
+/** 帖子里展示的作者信息（绝不包含邮箱等敏感字段） */
+export interface ForumAuthor {
+  id: number
+  username: string
+  displayName: string
+  avatar: string | null
+  role: UserRole
+  status: UserStatus
+}
+
+/** 主题列表项（不含正文，减小响应体积） */
+export interface ForumTopicSummary {
+  id: number
+  boardId: number
+  title: string
+  slug: string
+  status: ForumTopicStatus
+  pinned: boolean
+  locked: boolean
+  views: number
+  replyCount: number
+  lastReplyAt: string | null
+  createdAt: string
+  author: ForumAuthor
+  board?: Pick<ForumBoard, 'id' | 'name' | 'slug' | 'color'>
+}
+
+/** 主题详情（含正文） */
+export interface ForumTopic extends ForumTopicSummary {
+  content: string
+  updatedAt: string
+}
+
+/** 回复 */
+export interface ForumPost {
+  id: number
+  topicId: number
+  content: string
+  status: ForumPostStatus
+  replyTo: number | null
+  createdAt: string
+  updatedAt: string
+  author: ForumAuthor
+  /** replyTo 指向的那条回复的作者名，便于前端显示「回复 @某人」 */
+  replyToAuthor?: string | null
+}
+
+export interface ForumTopicInput {
+  boardId: number
+  title: string
+  content: string
+}
+
+export interface ForumReplyInput {
+  content: string
+  replyTo?: number | null
+}
+
+/** 后台管理主题时的可改字段 */
+export interface ForumTopicModerationInput {
+  pinned?: boolean
+  locked?: boolean
+  status?: ForumTopicStatus
+  boardId?: number
+}
+
+/* ------------------------------------------------------------------ */
 /* 媒体（图片）                                                        */
 /* ------------------------------------------------------------------ */
 

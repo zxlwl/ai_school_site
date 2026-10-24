@@ -682,6 +682,55 @@ async function main() {
   }
   console.log(`  ✓ 单页 ${pageCount} 个`)
 
+  /* 5.5 论坛版块 -------------------------------------------------- */
+  /*
+   * 版块数量刻意少而稳定（校内论坛不该像贴吧那样无限建版）。
+   * 若已存在任何版块就整体跳过，避免覆盖管理员自己调整过的结构。
+   */
+  const existingBoards = await sql`select id from forum_boards limit 1`
+  if (existingBoards.length === 0) {
+    const BOARDS = [
+      {
+        name: '校园生活',
+        slug: 'campus-life',
+        description: '聊聊校园里的日常、食堂、社团和宿舍那些事',
+        color: '#2563eb',
+        sort: 1,
+      },
+      {
+        name: '学习交流',
+        slug: 'study',
+        description: '课程讨论、考试经验、资料分享',
+        color: '#7c3aed',
+        sort: 2,
+      },
+      {
+        name: '社团活动',
+        slug: 'clubs',
+        description: '社团招新、活动预告与回顾',
+        color: '#059669',
+        sort: 3,
+      },
+      {
+        name: '意见建议',
+        slug: 'feedback',
+        description: '对学校管理的建议、意见反馈',
+        color: '#d97706',
+        sort: 4,
+      },
+    ]
+
+    for (const board of BOARDS) {
+      await sql`
+        insert into forum_boards (name, slug, description, color, sort_order, post_policy)
+        values (${board.name}, ${board.slug}, ${board.description}, ${board.color}, ${board.sort}, 'member_only')
+      `
+    }
+    console.log(`  ✓ 论坛版块 ${BOARDS.length} 个`)
+  } else {
+    console.log('  · 论坛版块已存在，跳过')
+  }
+
   /* 6. 站点设置 -------------------------------------------------- */
   const existingSettings = await sql`select key from settings where key = 'site' limit 1`
   if (existingSettings.length === 0) {

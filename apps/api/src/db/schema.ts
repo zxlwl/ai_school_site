@@ -240,6 +240,106 @@ export const messages = pgTable(
 )
 
 /* ------------------------------------------------------------------ */
+/* 论坛                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 版块。
+ *
+ * 由管理员创建（不允许用户自建），数量少、结构稳定 —— 这是校内论坛
+ * 和通用论坛最重要的区别。开放建版会让结构迅速失控。
+ */
+export const forumBoards = pgTable(
+  'forum_boards',
+  {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 60 }).notNull(),
+    slug: varchar('slug', { length: 80 }).notNull(),
+    description: text('description'),
+    color: varchar('color', { length: 16 }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    /** 发主题权限：'all' | 'member_only' | 'staff_only' */
+    postPolicy: varchar('post_policy', { length: 16 }).notNull().default('member_only'),
+    /** true 时新主题进入 pending，需管理员审核后才公开 */
+    needsReview: boolean('needs_review').notNull().default(false),
+    archived: boolean('archived').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('forum_boards_slug_idx').on(table.slug)],
+)
+
+/**
+ * 主题帖。
+ *
+ * replyCount / lastReplyAt 是冗余字段，在回复的同一个事务里维护，
+ * 避免列表页每次都 count(*) —— 论坛列表是最热的查询，不值得为一致性
+ * 牺牲这个。
+ */
+export const forumTopics = pgTable(
+  'forum_topics',
+  {
+    id: serial('id').primaryKey(),
+    boardId: integer('board_id')
+      .notNull()
+      .references(() => forumBoards.id, { onDelete: 'cascade' }),
+    authorId: integer('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: varchar('title', { length: 200 }).notNull(),
+    slug: varchar('slug', { length: 220 }).notNull(),
+    /** 首楼正文，冗余一份避免详情页额外 join forum_posts */
+    content: text('content').notNull(),
+    /** 'published' | 'pending' | 'hidden' | 'deleted' */
+    status: varchar('status', { length: 16 }).notNull().default('published'),
+    pinned: boolean('pinned').notNull().default(false),
+    /** 锁定后不能回复 */
+    locked: boolean('locked').notNull().default(false),
+    views: integer('views').notNull().default(0),
+    replyCount: integer('reply_count').notNull().default(0),
+    lastReplyAt: timestamp('last_reply_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('forum_topics_slug_idx').on(table.slug),
+    index('forum_topics_board_idx').on(table.boardId, table.status, table.lastReplyAt),
+    index('forum_topics_author_idx').on(table.authorId),
+    index('forum_topics_status_idx').on(table.status),
+  ],
+)
+
+/**
+ * 回复。
+ *
+ * 用软删除（status='deleted'）而不是物理删除：学生之间闹矛盾时，
+ * 删帖证据没了会让处理变得复杂。
+ */
+export const forumPosts = pgTable(
+  'forum_posts',
+  {
+    id: serial('id').primaryKey(),
+    topicId: integer('topic_id')
+      .notNull()
+      .references(() => forumTopics.id, { onDelete: 'cascade' }),
+    authorId: integer('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    /** 'published' | 'hidden' | 'deleted' */
+    status: varchar('status', { length: 16 }).notNull().default('published'),
+    /** 楼中楼：指向被回复的那条 */
+    replyTo: integer('reply_to'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('forum_posts_topic_idx').on(table.topicId, table.status, table.createdAt),
+    index('forum_posts_author_idx').on(table.authorId),
+  ],
+)
+
+/* ------------------------------------------------------------------ */
 /* 类型导出                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -252,3 +352,6 @@ export type PageRow = typeof pages.$inferSelect
 export type SettingsRow = typeof settings.$inferSelect
 export type MediaRow = typeof media.$inferSelect
 export type MessageRow = typeof messages.$inferSelect
+export type ForumBoardRow = typeof forumBoards.$inferSelect
+export type ForumTopicRow = typeof forumTopics.$inferSelect
+export type ForumPostRow = typeof forumPosts.$inferSelect

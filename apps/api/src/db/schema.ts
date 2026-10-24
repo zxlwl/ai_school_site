@@ -30,14 +30,66 @@ export const admins = pgTable(
     /** bcrypt 哈希，绝不存明文 */
     passwordHash: text('password_hash').notNull(),
     displayName: varchar('display_name', { length: 64 }).notNull().default('管理员'),
+    /**
+     * 角色：'owner' | 'editor' | 'viewer'
+     *
+     * 默认给 owner 是为了兼容旧数据 —— 升级前已存在的管理员账号
+     * （包括初始的 admin）都应该是超级管理员，否则升级后会有人
+     * 突然失去管理账号的权限、把自己锁在门外。
+     */
+    role: varchar('role', { length: 16 }).notNull().default('owner'),
+    /** 停用后无法登录，但记录保留（比直接删除安全，避免误删后无据可查） */
+    active: boolean('active').notNull().default(true),
     /** 仍使用初始密码时为 true，后台会持续提示修改 */
     mustChangePassword: boolean('must_change_password').notNull().default(false),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex('admins_username_idx').on(table.username)],
+  (table) => [
+    uniqueIndex('admins_username_idx').on(table.username),
+    index('admins_role_idx').on(table.role),
+  ],
 )
+
+/* ------------------------------------------------------------------ */
+/* 会员账号（前台注册用户）                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 与 admins 完全分离的两套账号体系：
+ * - admins    → 后台 /admin，能改内容
+ * - users     → 前台会员，只能管自己的资料，未来用于论坛发帖/评论
+ *
+ * 分开的原因：权限模型、生命周期、风控要求都不同。混在一张表里
+ * 迟早会写出「会员误判为管理员」这类越权漏洞。
+ */
+export const users = pgTable(
+  'users',
+  {
+    id: serial('id').primaryKey(),
+    username: varchar('username', { length: 32 }).notNull(),
+    /** 统一小写存储，用于大小写不敏感的唯一性判定 */
+    email: varchar('email', { length: 200 }),
+    passwordHash: text('password_hash').notNull(),
+    displayName: varchar('display_name', { length: 64 }).notNull(),
+    /** 头像：dataurl 或外链 */
+    avatar: text('avatar'),
+    /** 'member' | 'moderator' */
+    role: varchar('role', { length: 16 }).notNull().default('member'),
+    /** 'active' | 'muted' | 'banned' */
+    status: varchar('status', { length: 16 }).notNull().default('active'),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('users_username_idx').on(table.username),
+    uniqueIndex('users_email_idx').on(table.email),
+    index('users_status_idx').on(table.status),
+  ],
+)
+
 
 /* ------------------------------------------------------------------ */
 /* 分类                                                                */
@@ -192,6 +244,7 @@ export const messages = pgTable(
 /* ------------------------------------------------------------------ */
 
 export type AdminRow = typeof admins.$inferSelect
+export type UserRow = typeof users.$inferSelect
 export type CategoryRow = typeof categories.$inferSelect
 export type ArticleRow = typeof articles.$inferSelect
 export type AnnouncementRow = typeof announcements.$inferSelect

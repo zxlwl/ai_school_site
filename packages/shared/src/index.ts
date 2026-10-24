@@ -318,6 +318,34 @@ export interface DashboardRecentArticle {
 /* 认证                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 管理员角色。权限自上而下递减：
+ *   owner  —— 超级管理员，唯一可以管理其他管理员账号的角色
+ *   editor —— 编辑，可以增删改文章 / 分类 / 公告 / 单页 / 留言
+ *   viewer —— 只读，可以查看后台数据但不能做任何修改
+ *
+ * 放在 shared 里是为了让前后端用同一套判定，避免「按钮能点但接口 403」。
+ */
+export type AdminRole = 'owner' | 'editor' | 'viewer'
+
+export const ADMIN_ROLES: AdminRole[] = ['owner', 'editor', 'viewer']
+
+export const ADMIN_ROLE_LABEL: Record<AdminRole, string> = {
+  owner: '超级管理员',
+  editor: '编辑',
+  viewer: '只读',
+}
+
+/** 某角色是否具备写权限（内容类操作） */
+export function canWriteContent(role: AdminRole | string | undefined): boolean {
+  return role === 'owner' || role === 'editor'
+}
+
+/** 某角色是否可以管理管理员账号 */
+export function canManageAccounts(role: AdminRole | string | undefined): boolean {
+  return role === 'owner'
+}
+
 export interface LoginRequest {
   password: string
 }
@@ -333,6 +361,96 @@ export interface SessionInfo {
   mustChangePassword: boolean
   /** 当前登录用户名 */
   username?: string
+  /** 当前账号显示名 */
+  displayName?: string
+  /** 当前账号角色，前端据此隐藏无权操作 */
+  role?: AdminRole
+}
+
+/* ------------------------------------------------------------------ */
+/* 管理员账号管理                                                      */
+/* ------------------------------------------------------------------ */
+
+/** 后台「账号管理」列表项（绝不包含密码哈希） */
+export interface AdminAccount {
+  id: number
+  username: string
+  displayName: string
+  role: AdminRole
+  active: boolean
+  mustChangePassword: boolean
+  lastLoginAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** 新建 / 编辑管理员账号的入参 */
+export interface AdminAccountInput {
+  username?: string
+  displayName?: string
+  role?: AdminRole
+  active?: boolean
+  /** 新建时必填；编辑时留空表示不改密码 */
+  password?: string
+}
+
+/* ------------------------------------------------------------------ */
+/* 会员账号（前台注册用户，为论坛预留）                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 会员状态：
+ *   active —— 正常
+ *   muted  —— 禁言（可登录浏览，不能发帖/评论）
+ *   banned —— 封禁（不能登录）
+ */
+export type UserStatus = 'active' | 'muted' | 'banned'
+
+export const USER_STATUSES: UserStatus[] = ['active', 'muted', 'banned']
+
+export const USER_STATUS_LABEL: Record<UserStatus, string> = {
+  active: '正常',
+  muted: '禁言',
+  banned: '封禁',
+}
+
+export type UserRole = 'member' | 'moderator'
+
+/** 当前登录会员的公开资料（不含任何敏感字段） */
+export interface UserProfile {
+  id: number
+  username: string
+  email: string | null
+  displayName: string
+  avatar: string | null
+  role: UserRole
+  status: UserStatus
+  createdAt: string
+  lastLoginAt: string | null
+}
+
+export interface UserSessionInfo {
+  authenticated: boolean
+  user?: UserProfile
+}
+
+export interface RegisterRequest {
+  username: string
+  password: string
+  email?: string
+  displayName?: string
+}
+
+export interface UserLoginRequest {
+  /** 用户名或邮箱均可 */
+  account: string
+  password: string
+}
+
+export interface UpdateProfileInput {
+  displayName?: string
+  email?: string
+  avatar?: string | null
 }
 
 /* ------------------------------------------------------------------ */

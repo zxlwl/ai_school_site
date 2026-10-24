@@ -8,6 +8,8 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { adminRoutes } from './routes/admin'
+import { adminAccountRoutes } from './routes/admin-accounts'
+import { accountRoutes } from './routes/account'
 import { authRoutes } from './routes/auth'
 import { publicRoutes } from './routes/public'
 import { uploadRoutes } from './routes/upload'
@@ -147,7 +149,21 @@ export function createApp() {
 
   app.route('/api/public', publicRoutes)
   app.route('/api/auth', authRoutes)
+
+  /*
+   * 账号管理必须挂在 /api/admin/accounts，且注册在 adminRoutes 之前。
+   *
+   * 原因：adminRoutes 内部有 `use('*', requireAuth)`，它只判断「是否登录」，
+   * 不区分角色。若先挂 adminRoutes，只读账号也能进到账号管理接口。
+   * 先注册专用路由，就能让 requireOwner 第一时间接管。
+   */
+  app.route('/api/admin/accounts', adminAccountRoutes)
+
   app.route('/api/admin', adminRoutes)
+
+  /* 会员（前台）账号 */
+  app.route('/api/account', accountRoutes)
+
   app.route('/api/upload', uploadRoutes)
 
   /* -------------------------------------------------------------- */

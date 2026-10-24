@@ -8,7 +8,7 @@
 import { Hono } from 'hono'
 import { and, asc, count, desc, eq, ilike, or, sql } from 'drizzle-orm'
 import type { ContentStatus } from '@school/shared'
-import { deriveExcerpt } from '@school/shared'
+import { canWriteContent, deriveExcerpt } from '@school/shared'
 import { getDb } from '../db/client'
 import {
   announcements,
@@ -35,6 +35,24 @@ export const adminRoutes = new Hono<AppBindings>()
 
 // 所有后台接口统一要求登录
 adminRoutes.use('*', requireAuth)
+
+/*
+ * 写操作再要求一次角色权限。
+ *
+ * 只读（viewer）账号可以浏览后台、看数据，但任何增删改都会被这里拦住。
+ * 按**方法**判断而不是逐个路由挂守卫，是为了避免以后新增写接口时漏挂 ——
+ * 漏挂一次就是一个越权漏洞。GET/HEAD/OPTIONS 之外一律要求写权限。
+ */
+adminRoutes.use('*', async (c, next) => {
+  const method = c.req.method
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return next()
+  }
+  if (!canWriteContent(c.get('session').role)) {
+    return fail(c, 403, 'forbidden', '当前账号为只读角色，无法修改内容')
+  }
+  return next()
+})
 
 /* ------------------------------------------------------------------ */
 /* 校验辅助                                                            */

@@ -23,6 +23,9 @@ import { ArticleListPage } from './pages/ArticleListPage'
 import { ArticleDetailPage } from './pages/ArticleDetailPage'
 import { AnnouncementsPage, NotFoundPage, SinglePage } from './pages/PageView'
 import { ContactPage } from './pages/ContactPage'
+import { LoginPage } from './pages/LoginPage'
+import { RegisterPage } from './pages/RegisterPage'
+import { AccountPage } from './pages/AccountPage'
 
 // 后台按需加载：访客浏览前台时不必下载整个管理端代码
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'))
@@ -36,6 +39,7 @@ const AdminPages = lazy(() => import('./pages/admin/AdminPages'))
 const AdminMessages = lazy(() => import('./pages/admin/AdminMessages'))
 const AdminAppearance = lazy(() => import('./pages/admin/AdminAppearance'))
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'))
+const AdminAccounts = lazy(() => import('./pages/admin/AdminAccounts'))
 
 export default function App() {
   return (
@@ -51,6 +55,9 @@ export default function App() {
             <Route path="/article/:slug" element={<ArticleDetailPage />} />
             <Route path="/announcements" element={<AnnouncementsPage />} />
             <Route path="/contact" element={<ContactPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/account" element={<AccountPage />} />
             {/* 通用单页兜底：必须放在所有固定路由之后 */}
             <Route path="/:slug" element={<SinglePage />} />
             <Route path="*" element={<NotFoundPage />} />
@@ -69,6 +76,7 @@ export default function App() {
             <Route path="messages" element={<AdminMessages />} />
             <Route path="appearance" element={<AdminAppearance />} />
             <Route path="settings" element={<AdminSettings />} />
+            <Route path="accounts" element={<AdminAccounts />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Route>
         </Routes>

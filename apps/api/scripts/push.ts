@@ -167,9 +167,40 @@ const STATEMENTS = [
    )`,
   `create index if not exists messages_handled_idx on messages (handled)`,
 
+  /* 会员（前台注册用户）------------------------------------------ */
+  /*
+   * 与 admins 完全分离：权限模型和生命周期都不一样。
+   * 混在一张表里最容易出的问题是越权 —— 会员行一旦被误判成管理员就完了。
+   */
+  `create table if not exists users (
+     id serial primary key,
+     username varchar(20) not null,
+     email varchar(200),
+     password_hash text not null,
+     display_name varchar(64) not null,
+     avatar text,
+     role varchar(16) not null default 'member',
+     status varchar(16) not null default 'active',
+     last_login_at timestamptz,
+     created_at timestamptz not null default now(),
+     updated_at timestamptz not null default now()
+   )`,
+  `create unique index if not exists users_username_idx on users (username)`,
+  `create unique index if not exists users_email_idx on users (email)`,
+  `create index if not exists users_status_idx on users (status)`,
+
   /* 老库升级：以下语句在表已存在时补齐新增列（重复执行安全） ------- */
   `alter table pages add column if not exists summary text`,
   `alter table messages add column if not exists updated_at timestamptz not null default now()`,
+
+  /* admins 加角色与启用状态（老库升级）---------------------------- */
+  /*
+   * 默认 'owner' 而不是 'editor'：升级前已存在的管理员本来就该是超级管理员，
+   * 若默认给 editor，升级后会发现谁都管不了账号。active 默认 true 同理。
+   */
+  `alter table admins add column if not exists role varchar(16) not null default 'owner'`,
+  `alter table admins add column if not exists active boolean not null default true`,
+  `create index if not exists admins_role_idx on admins (role)`,
 ]
 
 async function main() {

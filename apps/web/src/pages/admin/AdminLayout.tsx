@@ -21,8 +21,10 @@ import {
   Palette,
   Settings as SettingsIcon,
   ShieldAlert,
+  UserCog,
   X,
 } from 'lucide-react'
+import type { AdminRole } from '@school/shared'
 import { authApi, UnauthorizedError } from '../../lib/api'
 import { useSiteSettings } from '../../lib/hooks'
 import { Spinner, ToastHost, cn, toast } from '../../components/ui'
@@ -36,6 +38,8 @@ const NAV_ITEMS = [
   { to: '/admin/messages', label: '访客留言', icon: MessageSquare },
   { to: '/admin/appearance', label: '外观主题', icon: Palette },
   { to: '/admin/settings', label: '系统设置', icon: SettingsIcon },
+  // 仅超级管理员可见。注意：隐藏只是体验，真正的拦截在服务端。
+  { to: '/admin/accounts', label: '账号管理', icon: UserCog, ownerOnly: true },
 ]
 
 export default function AdminLayout() {
@@ -44,6 +48,7 @@ export default function AdminLayout() {
 
   const [authState, setAuthState] = useState<'checking' | 'ok' | 'denied' | 'offline'>('checking')
   const [username, setUsername] = useState<string | null>(null)
+  const [role, setRole] = useState<AdminRole | null>(null)
   const [mustChangePassword, setMustChangePassword] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -57,6 +62,7 @@ export default function AdminLayout() {
       .then((session) => {
         if (cancelled) return
         setUsername(session?.username ?? null)
+        setRole(session?.role ?? null)
         setMustChangePassword(session?.mustChangePassword ?? false)
         if (!session?.authenticated) {
           setAuthState('denied')
@@ -183,7 +189,7 @@ export default function AdminLayout() {
 
         <nav className="flex-1 overflow-y-auto p-3" aria-label="后台导航">
           <ul className="grid gap-0.5">
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.filter((item) => !item.ownerOnly || role === 'owner').map((item) => (
               <li key={item.to}>
                 <NavLink
                   to={item.to}

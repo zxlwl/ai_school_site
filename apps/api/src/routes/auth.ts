@@ -70,16 +70,28 @@ authRoutes.post('/login', async (c) => {
     return fail(c, 401, 'invalid_credentials', '密码错误')
   }
 
+  // 停用的账号可以保留记录但不能登录。放在密码校验之后判断，
+  // 避免通过「停用」提示反推出账号是否存在。
+  if (!admin.active) {
+    return fail(c, 403, 'account_disabled', '该账号已被停用，请联系超级管理员')
+  }
+
   await db.update(admins).set({ lastLoginAt: new Date() }).where(eq(admins.id, admin.id))
+
+  const role =
+    admin.role === 'owner' || admin.role === 'editor' || admin.role === 'viewer'
+      ? admin.role
+      : 'viewer'
 
   const token = await signSession({
     sub: String(admin.id),
     username: admin.username,
     mcp: admin.mustChangePassword,
+    role,
   })
 
   c.header('Set-Cookie', buildSessionCookie(token, isSecureRequest(c)))
-  return ok(c, { ok: true, mustChangePassword: admin.mustChangePassword })
+  return ok(c, { ok: true, mustChangePassword: admin.mustChangePassword, role })
 })
 
 /* ------------------------------------------------------------------ */
@@ -103,10 +115,38 @@ authRoutes.get('/session', async (c) => {
     return ok(c, { authenticated: false, mustChangePassword: false })
   }
 
+  // 回库确认账号仍然存在且未被停用：令牌有效不等于账号可用。
+  const db = getDb()
+  const rows = await db
+    .select({
+      id: admins.id,
+      username: admins.username,
+      displayName: admins.displayName,
+      role: admins.role,
+      active: admins.active,
+      mustChangePassword: admins.mustChangePassword,
+    })
+    .from(admins)
+    .where(eq(admins.id, Number(session.sub)))
+    .limit(1)
+  const admin = rows[0]
+
+  if (!admin || !admin.active) {
+    c.header('Set-Cookie', buildClearCookie())
+    return ok(c, { authenticated: false, mustChangePassword: false })
+  }
+
+  const role =
+    admin.role === 'owner' || admin.role === 'editor' || admin.role === 'viewer'
+      ? admin.role
+      : 'viewer'
+
   return ok(c, {
     authenticated: true,
-    mustChangePassword: session.mcp,
-    username: session.username,
+    mustChangePassword: admin.mustChangePassword,
+    username: admin.username,
+    displayName: admin.displayName,
+    role,
   })
 })
 
@@ -151,6 +191,10 @@ authRoutes.post('/change-password', requireAuth, async (c) => {
     sub: String(admin.id),
     username: admin.username,
     mcp: false,
+    role:
+      admin.role === 'owner' || admin.role === 'editor' || admin.role === 'viewer'
+        ? admin.role
+        : 'viewer',
   })
   c.header('Set-Cookie', buildSessionCookie(token, isSecureRequest(c)))
 

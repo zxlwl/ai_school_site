@@ -108,6 +108,8 @@ export const api = {
 /* ------------------------------------------------------------------ */
 
 import type {
+  AdminAccount,
+  AdminAccountInput,
   Announcement,
   AnnouncementInput,
   Article,
@@ -121,8 +123,13 @@ import type {
   Page,
   PageInput,
   Paginated,
+  RegisterRequest,
   SessionInfo,
   SiteSettings,
+  UpdateProfileInput,
+  UserLoginRequest,
+  UserProfile,
+  UserSessionInfo,
 } from '@school/shared'
 
 function toQuery(params: Record<string, unknown> | undefined): string {
@@ -191,6 +198,37 @@ export const authApi = {
 
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post<{ ok: true }>('/auth/change-password', { currentPassword, newPassword }),
+}
+
+/* ---------------------------- 会员账号 ---------------------------- */
+
+export const accountApi = {
+  register: (payload: RegisterRequest) =>
+    api.post<{ user: UserProfile }>('/account/register', payload),
+
+  login: (payload: UserLoginRequest) => api.post<{ user: UserProfile }>('/account/login', payload),
+
+  logout: () => api.post<{ ok: true }>('/account/logout'),
+
+  session: () => api.get<UserSessionInfo>('/account/session'),
+
+  updateProfile: (payload: UpdateProfileInput) =>
+    api.put<{ user: UserProfile }>('/account/profile', payload),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post<{ ok: true }>('/account/change-password', { currentPassword, newPassword }),
+}
+
+/* ---------------------------- 管理员账号 -------------------------- */
+
+export const adminAccountApi = {
+  list: () => api.get<AdminAccount[]>('/admin/accounts'),
+  create: (payload: AdminAccountInput) => api.post<AdminAccount>('/admin/accounts', payload),
+  update: (id: number, payload: AdminAccountInput) =>
+    api.put<AdminAccount>(`/admin/accounts/${id}`, payload),
+  remove: (id: number) => api.delete<{ ok: true }>(`/admin/accounts/${id}`),
+  forcePasswordChange: (id: number) =>
+    api.post<AdminAccount>(`/admin/accounts/${id}/force-password-change`),
 }
 
 /* ---------------------------- 后台接口 ---------------------------- */

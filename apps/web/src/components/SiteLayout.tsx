@@ -7,10 +7,10 @@
 
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { GraduationCap, Mail, MapPin, Menu, Phone, X } from 'lucide-react'
-import type { Category, Page, SiteSettings } from '@school/shared'
+import { GraduationCap, LogIn, Mail, MapPin, Menu, Phone, UserRound, X } from 'lucide-react'
+import type { Category, Page, SiteSettings, UserProfile } from '@school/shared'
 import { useAsync, useSiteSettings } from '../lib/hooks'
-import { publicApi } from '../lib/api'
+import { accountApi, publicApi } from '../lib/api'
 import { cn, ToastHost } from './ui'
 
 interface NavData {
@@ -24,8 +24,28 @@ export function SiteLayout() {
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [user, setUser] = useState<UserProfile | null>(null)
 
   const { data: nav } = useAsync<NavData>(() => publicApi.navigation(), [])
+
+  /*
+   * 会员会话单独拉取，失败不影响整站渲染 —— 未登录/接口异常时
+   * 只是不显示右上角头像，绝不能因此让整个页面出不来。
+   */
+  useEffect(() => {
+    let cancelled = false
+    accountApi
+      .session()
+      .then((session) => {
+        if (!cancelled) setUser(session?.authenticated ? (session.user ?? null) : null)
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [location.pathname])
 
   // 路由变化时收起移动端菜单并回到顶部
   useEffect(() => {
@@ -125,6 +145,31 @@ export function SiteLayout() {
           </nav>
 
           <div className="ml-auto flex items-center gap-2 lg:ml-0">
+            {user ? (
+              <Link
+                to="/account"
+                className="btn-ghost hidden !px-2 !py-1.5 text-sm sm:inline-flex"
+                title={`${user.displayName} 的账号中心`}
+              >
+                {user.avatar ? (
+                  <img src={user.avatar} alt="" className="h-6 w-6 rounded-full object-cover" />
+                ) : (
+                  <span
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold"
+                    style={{ backgroundColor: 'var(--c-primary)', color: 'var(--c-primary-fg)' }}
+                    aria-hidden
+                  >
+                    {user.displayName.slice(0, 1)}
+                  </span>
+                )}
+                <span className="max-w-24 truncate">{user.displayName}</span>
+              </Link>
+            ) : (
+              <Link to="/login" className="btn-ghost hidden !px-3 !py-1.5 text-sm sm:inline-flex">
+                <LogIn size={14} aria-hidden />
+                登录
+              </Link>
+            )}
             <Link to="/admin" className="btn-ghost hidden !px-3 !py-1.5 text-sm sm:inline-flex">
               管理后台
             </Link>
@@ -159,6 +204,21 @@ export function SiteLayout() {
                   {page.title}
                 </MobileNavItem>
               ))}
+              {user ? (
+                <MobileNavItem to="/account">
+                  <span className="inline-flex items-center gap-1.5">
+                    <UserRound size={14} aria-hidden />
+                    {user.displayName}（账号中心）
+                  </span>
+                </MobileNavItem>
+              ) : (
+                <MobileNavItem to="/login">
+                  <span className="inline-flex items-center gap-1.5">
+                    <LogIn size={14} aria-hidden />
+                    登录 / 注册
+                  </span>
+                </MobileNavItem>
+              )}
               <MobileNavItem to="/admin">管理后台</MobileNavItem>
             </div>
           </nav>
